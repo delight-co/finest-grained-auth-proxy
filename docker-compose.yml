@@ -1,0 +1,8 @@
+services:
+  fgap:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8766:8766"
+    volumes:
+      - ./config.json5:/etc/fgap/config.json5:ro

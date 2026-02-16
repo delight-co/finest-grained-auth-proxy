@@ -1,0 +1,9 @@
+.git
+.gitignore
+*.egg-info
+__pycache__
+tests/
+.venv/
+*.pyc
+DESIGN.md
+CLAUDE.md
