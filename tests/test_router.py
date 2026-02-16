@@ -1,3 +1,5 @@
+import logging
+
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
@@ -125,3 +127,59 @@ class TestHealthEndpoint:
         data = await resp.json()
         assert data["status"] == "ok"
         assert "echo" in data["plugins"]
+
+
+class TestAuditLog:
+    async def test_successful_call_logged(self, echo_client, caplog):
+        with caplog.at_level(logging.INFO, logger="fgap.core.router"):
+            await echo_client.post("/cli", json={
+                "tool": "echo",
+                "args": ["hello"],
+                "resource": "acme/repo1",
+            })
+        assert any(
+            "tool=echo" in r.message and "resource=acme/repo1" in r.message
+            and "exit_code=0" in r.message
+            for r in caplog.records
+        )
+
+    async def test_missing_tool_logged(self, echo_client, caplog):
+        with caplog.at_level(logging.WARNING, logger="fgap.core.router"):
+            await echo_client.post("/cli", json={
+                "args": ["hello"],
+                "resource": "acme/repo1",
+            })
+        assert any(
+            "rejected=400" in r.message
+            for r in caplog.records
+        )
+
+    async def test_no_credential_logged(self, echo_plugin, caplog):
+        config = {"plugins": {"echo": {"credentials": [
+            {"token": "t", "resources": ["specific/only"]},
+        ]}}}
+        app = create_routes(config, {"echo": echo_plugin})
+        async with TestClient(TestServer(app)) as client:
+            with caplog.at_level(logging.WARNING, logger="fgap.core.router"):
+                await client.post("/cli", json={
+                    "tool": "echo",
+                    "args": ["hello"],
+                    "resource": "other/repo",
+                })
+        assert any(
+            "rejected=403" in r.message and "resource=other/repo" in r.message
+            for r in caplog.records
+        )
+
+    async def test_command_intercepted_logged(self, ft_client, caplog):
+        with caplog.at_level(logging.INFO, logger="fgap.core.router"):
+            await ft_client.post("/cli", json={
+                "tool": "printf",
+                "args": ["custom", "intercept"],
+                "resource": "any",
+            })
+        assert any(
+            "tool=printf" in r.message and "cmd=custom" in r.message
+            and "exit_code=0" in r.message
+            for r in caplog.records
+        )

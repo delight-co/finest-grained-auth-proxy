@@ -4,9 +4,20 @@ import logging
 from aiohttp import web
 
 from fgap.core.config import load_config
+from fgap.core.masking import MaskingFormatter, collect_secrets
 from fgap.core.router import create_app
 
 logger = logging.getLogger(__name__)
+
+LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
+
+
+def setup_logging(secrets: set[str]) -> None:
+    """Configure logging with secret masking."""
+    handler = logging.StreamHandler()
+    handler.setFormatter(MaskingFormatter(LOG_FORMAT, secrets))
+    logging.root.addHandler(handler)
+    logging.root.setLevel(logging.INFO)
 
 
 def main() -> int:
@@ -16,12 +27,9 @@ def main() -> int:
     parser.add_argument("--host", default="0.0.0.0", help="Host to bind (default: 0.0.0.0)")
     args = parser.parse_args()
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    )
-
     config = load_config(args.config)
+    setup_logging(collect_secrets(config))
+
     port = args.port or config.get("port", 8766)
 
     app = create_app(config)
