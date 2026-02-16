@@ -83,7 +83,12 @@ def create_routes(config: dict, plugins: dict[str, Plugin]) -> web.Application:
                     return web.json_response(result)
 
             # Execute CLI subprocess
-            result = await execute_cli(tool, args, credential["env"], timeout=cli_timeout)
+            # gh needs -R to know the target repo (wrapper strips it for resource detection)
+            # api subcommand doesn't support -R — it uses endpoint paths instead
+            cli_args = args
+            if tool == "gh" and cmd != "api":
+                cli_args = args + ["-R", resource]
+            result = await execute_cli(tool, cli_args, credential["env"], timeout=cli_timeout)
             logger.info(
                 "cli tool=%s resource=%s cmd=%s exit_code=%d",
                 tool, resource, cmd, result["exit_code"],
