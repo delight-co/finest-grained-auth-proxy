@@ -1,5 +1,7 @@
 # finest-grained-auth-proxy (fgap)
 
+> **0.x — Unstable**: Early development. APIs and config format may change without notice.
+
 A multi-CLI auth proxy that isolates credentials from AI agent sandbox environments.
 
 Successor to [fgp](https://github.com/carrotRakko/github-finest-grained-permission-proxy) (GitHub-only). fgap supports multiple CLI tools via a plugin system.
@@ -163,10 +165,17 @@ Credentials are evaluated top-to-bottom. First match wins.
 ## Security
 
 - Credentials stay on the proxy side, invisible to the sandbox
+- Config file should be `chmod 600` (readable only by owner)
 - Audit logging: all CLI invocations are logged with tool, resource, and exit code
 - Credential masking: secrets are replaced with `***` in all log output
 - Email addresses in `/auth/status` responses are masked
 - **Local network only**: This proxy has no authentication. Do not expose to the internet.
+
+## Limitations
+
+- **Raw GraphQL blocked**: `gh api graphql` is rejected — use high-level commands (issue, pr, discussion, sub-issue) instead
+- **Git LFS not supported**: Only basic git smart HTTP protocol (clone/fetch/push)
+- **REST API limited to `repos/` endpoints**: `gh api /user`, `/orgs/...` etc. won't work (cannot determine which credential to use)
 
 ## License
 
