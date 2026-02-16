@@ -4,6 +4,7 @@ Collects secret values from config and replaces them with '***' in log messages.
 """
 
 import logging
+import re
 
 SECRET_KEYS = frozenset({
     "token",
@@ -45,6 +46,28 @@ def mask_value(value: str, visible_prefix: int = 8) -> str:
     if len(value) <= visible_prefix:
         return "***"
     return value[:visible_prefix] + "***"
+
+
+_EMAIL_RE = re.compile(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+")
+
+
+def mask_email(email: str) -> str:
+    """Mask the local part of an email address.
+
+    Example: mask_email("user@example.com") -> "us***@example.com"
+    """
+    at = email.find("@")
+    if at < 0:
+        return email
+    local, domain = email[:at], email[at:]
+    if len(local) <= 2:
+        return "***" + domain
+    return local[:2] + "***" + domain
+
+
+def mask_emails_in_text(text: str) -> str:
+    """Find and mask all email addresses in text."""
+    return _EMAIL_RE.sub(lambda m: mask_email(m.group(0)), text)
 
 
 def mask_secrets(text: str, secrets: set[str]) -> str:

@@ -17,7 +17,7 @@ class TestGoogleHealthCheck:
         assert len(results) == 1
         r = results[0]
         assert r["valid"] is True
-        assert r["accounts"] == "user@example.com"
+        assert r["accounts"] == "us***@example.com"
         assert r["masked_keyring_password"] == "test***"
         assert r["resources"] == ["*"]
 
@@ -65,8 +65,8 @@ class TestGoogleHealthCheck:
         results = await plugin.health_check(config, _run_gog=fake_run_gog)
 
         assert len(results) == 2
-        assert results[0]["accounts"] == "user1@example.com"
-        assert results[1]["accounts"] == "user2@example.com"
+        assert results[0]["accounts"] == "us***@example.com"
+        assert results[1]["accounts"] == "us***@example.com"
 
     async def test_empty_credentials(self):
         plugin = GooglePlugin()

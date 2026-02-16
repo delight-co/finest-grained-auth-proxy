@@ -3,6 +3,8 @@ import logging
 from fgap.core.masking import (
     MaskingFormatter,
     collect_secrets,
+    mask_email,
+    mask_emails_in_text,
     mask_secrets,
     mask_value,
 )
@@ -103,6 +105,48 @@ class TestMaskValue:
 
     def test_empty_string(self):
         assert mask_value("") == "***"
+
+
+class TestMaskEmail:
+    def test_normal_email(self):
+        assert mask_email("user@example.com") == "us***@example.com"
+
+    def test_short_local_part(self):
+        assert mask_email("ab@example.com") == "***@example.com"
+
+    def test_single_char_local(self):
+        assert mask_email("a@example.com") == "***@example.com"
+
+    def test_long_local_part(self):
+        assert mask_email("longusername@gmail.com") == "lo***@gmail.com"
+
+    def test_no_at_sign(self):
+        assert mask_email("not-an-email") == "not-an-email"
+
+    def test_dots_in_local(self):
+        assert mask_email("first.last@example.com") == "fi***@example.com"
+
+    def test_subdomain(self):
+        assert mask_email("user@mail.example.co.jp") == "us***@mail.example.co.jp"
+
+
+class TestMaskEmailsInText:
+    def test_single_email(self):
+        assert mask_emails_in_text("account: user@example.com") == "account: us***@example.com"
+
+    def test_multiple_emails(self):
+        text = "user1@gmail.com\nuser2@example.com"
+        result = mask_emails_in_text(text)
+        assert "us***@gmail.com" in result
+        assert "us***@example.com" in result
+        assert "user1" not in result
+        assert "user2" not in result
+
+    def test_no_emails(self):
+        assert mask_emails_in_text("no emails here") == "no emails here"
+
+    def test_empty_string(self):
+        assert mask_emails_in_text("") == ""
 
 
 class TestMaskingFormatter:

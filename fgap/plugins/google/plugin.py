@@ -1,7 +1,7 @@
 import asyncio
 import os
 
-from fgap.core.masking import mask_value
+from fgap.core.masking import mask_emails_in_text, mask_value
 from fgap.plugins.base import Plugin
 
 
@@ -39,6 +39,10 @@ class GooglePlugin(Plugin):
             }
             try:
                 status = await _run_gog(keyring_pw)
+                if "accounts" in status:
+                    status["accounts"] = mask_emails_in_text(
+                        status["accounts"],
+                    )
                 entry.update(status)
             except Exception as e:
                 entry.update({"valid": False, "error": str(e)})
