@@ -23,5 +23,6 @@ class GitHubPlugin(Plugin):
         return make_routes(self.select_credential, config)
 
     def get_commands(self) -> dict[str, callable]:
-        # Commands (discussion, issue, sub-issue) will be added later.
-        return {}
+        from .commands.issue import execute as execute_issue
+
+        return {"issue": execute_issue}
