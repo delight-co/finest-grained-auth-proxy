@@ -49,6 +49,8 @@ docker compose up -d
 
 **Without Docker:**
 
+Requires [gh](https://cli.github.com/) and/or [gog](https://github.com/steipete/gogcli) installed on the host, depending on which plugins you use.
+
 ```bash
 uv pip install .
 python main.py --config config.json5
