@@ -1,4 +1,5 @@
-from fgap.plugins.github.credential import match_resource, select_credential
+from fgap.plugins.base import match_resource
+from fgap.plugins.github.credential import select_credential
 
 
 class TestMatchResource:
