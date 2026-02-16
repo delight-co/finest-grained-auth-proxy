@@ -4,11 +4,13 @@ _registry: dict[str, type[Plugin]] = {}
 
 
 def register_plugin(plugin_cls: type[Plugin]) -> type[Plugin]:
-    """Register a plugin class. Can be used as a decorator."""
+    """Register a plugin class. Idempotent for the same class."""
     instance = plugin_cls()
     name = instance.name
     if name in _registry:
-        raise ValueError(f"Plugin '{name}' already registered")
+        if _registry[name] is plugin_cls:
+            return plugin_cls
+        raise ValueError(f"Plugin '{name}' already registered with a different class")
     _registry[name] = plugin_cls
     return plugin_cls
 
