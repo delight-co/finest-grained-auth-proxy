@@ -27,42 +27,58 @@ def create_routes(config: dict, plugins: dict[str, Plugin]) -> web.Application:
     async def handle_cli(request: web.Request) -> web.Response:
         data = await request.json()
 
-        tool = data.get("tool")
-        if not tool:
-            raise web.HTTPBadRequest(text="Missing 'tool' field")
-
+        tool = data.get("tool", "")
         args = data.get("args", [])
-
-        resource = data.get("resource")
-        if not resource:
-            raise web.HTTPBadRequest(text="Missing 'resource' field")
-
-        # Find plugin
-        plugin = find_plugin_for_tool(tool, plugins)
-        if not plugin:
-            raise web.HTTPBadRequest(text=f"No plugin handles tool: {tool}")
-
-        # Policy check (allow-all stub)
+        resource = data.get("resource", "")
         cmd = args[0] if args else ""
-        if not await evaluate(tool, cmd, resource, config):
-            raise web.HTTPForbidden(text="Policy denied")
 
-        # Select credential
-        plugin_config = config.get("plugins", {}).get(plugin.name, {})
-        credential = plugin.select_credential(resource, plugin_config)
-        if not credential:
-            raise web.HTTPForbidden(text=f"No credential for {tool} on {resource}")
+        try:
+            if not tool:
+                raise web.HTTPBadRequest(text="Missing 'tool' field")
 
-        # Try custom commands (with fallthrough)
-        commands = plugin.get_commands()
-        if cmd and cmd in commands:
-            result = await commands[cmd](args[1:], resource, credential)
-            if result is not None:
-                return web.json_response(result)
+            if not resource:
+                raise web.HTTPBadRequest(text="Missing 'resource' field")
 
-        # Execute CLI subprocess
-        result = await execute_cli(tool, args, credential["env"])
-        return web.json_response(result)
+            # Find plugin
+            plugin = find_plugin_for_tool(tool, plugins)
+            if not plugin:
+                raise web.HTTPBadRequest(text=f"No plugin handles tool: {tool}")
+
+            # Policy check (allow-all stub)
+            if not await evaluate(tool, cmd, resource, config):
+                raise web.HTTPForbidden(text="Policy denied")
+
+            # Select credential
+            plugin_config = config.get("plugins", {}).get(plugin.name, {})
+            credential = plugin.select_credential(resource, plugin_config)
+            if not credential:
+                raise web.HTTPForbidden(text=f"No credential for {tool} on {resource}")
+
+            # Try custom commands (with fallthrough)
+            commands = plugin.get_commands()
+            if cmd and cmd in commands:
+                result = await commands[cmd](args[1:], resource, credential)
+                if result is not None:
+                    logger.info(
+                        "cli tool=%s resource=%s cmd=%s exit_code=%d",
+                        tool, resource, cmd, result["exit_code"],
+                    )
+                    return web.json_response(result)
+
+            # Execute CLI subprocess
+            result = await execute_cli(tool, args, credential["env"])
+            logger.info(
+                "cli tool=%s resource=%s cmd=%s exit_code=%d",
+                tool, resource, cmd, result["exit_code"],
+            )
+            return web.json_response(result)
+
+        except web.HTTPException as exc:
+            logger.warning(
+                "cli tool=%s resource=%s cmd=%s rejected=%d %s",
+                tool, resource, cmd, exc.status_code, exc.reason,
+            )
+            raise
 
     async def handle_health(request: web.Request) -> web.Response:
         statuses = {}
