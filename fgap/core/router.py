@@ -75,16 +75,24 @@ def create_routes(config: dict, plugins: dict[str, Plugin]) -> web.Application:
     app.router.add_get("/health", handle_health)
 
     # Plugin-specific routes (e.g. git smart HTTP proxy)
-    for plugin in plugins.values():
-        for method, path, handler in plugin.get_routes():
+    for name, plugin in plugins.items():
+        plugin_config = config.get("plugins", {}).get(name, {})
+        for method, path, handler in plugin.get_routes(plugin_config):
             app.router.add_route(method, path, handler)
 
     return app
 
 
 def create_app(config: dict) -> web.Application:
-    """Create the full application with plugin discovery."""
-    from fgap.plugins import discover_plugins
+    """Create the full application with known plugins."""
+    from fgap.plugins import discover_plugins, register_plugin
+
+    # Register known plugins
+    try:
+        from fgap.plugins.github import GitHubPlugin
+        register_plugin(GitHubPlugin)
+    except (ImportError, ValueError):
+        pass
 
     plugins = discover_plugins(config)
     return create_routes(config, plugins)

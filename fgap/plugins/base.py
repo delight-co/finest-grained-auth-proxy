@@ -30,8 +30,12 @@ class Plugin(ABC):
         """
         ...
 
-    def get_routes(self) -> list[tuple[str, str, callable]]:
-        """Return custom HTTP routes: [(method, path_pattern, handler), ...]."""
+    def get_routes(self, config: dict) -> list[tuple[str, str, callable]]:
+        """Return custom HTTP routes: [(method, path_pattern, handler), ...].
+
+        Args:
+            config: Plugin-specific config section.
+        """
         return []
 
     def get_commands(self) -> dict[str, callable]:
