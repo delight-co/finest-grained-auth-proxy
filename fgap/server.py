@@ -1,0 +1,30 @@
+import argparse
+import logging
+
+from aiohttp import web
+
+from fgap.core.config import load_config
+from fgap.core.router import create_app
+
+logger = logging.getLogger(__name__)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="fgap - multi-CLI auth proxy")
+    parser.add_argument("--config", required=True, help="Path to config file (JSON5)")
+    parser.add_argument("--port", type=int, help="Port override (default: from config or 8766)")
+    parser.add_argument("--host", default="0.0.0.0", help="Host to bind (default: 0.0.0.0)")
+    args = parser.parse_args()
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+
+    config = load_config(args.config)
+    port = args.port or config.get("port", 8766)
+
+    app = create_app(config)
+    logger.info("Starting fgap on %s:%d", args.host, port)
+    web.run_app(app, host=args.host, port=port, print=None)
+    return 0

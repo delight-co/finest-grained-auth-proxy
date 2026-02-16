@@ -1,0 +1,18 @@
+[project]
+name = "fgap"
+version = "0.1.0"
+description = "Multi-CLI auth proxy that isolates credentials from AI agent sandbox environments"
+requires-python = ">=3.11"
+dependencies = [
+    "aiohttp>=3.9",
+    "json5>=0.9",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
