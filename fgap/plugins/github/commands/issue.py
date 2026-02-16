@@ -9,6 +9,8 @@ Everything else falls through to gh CLI (returns None).
 
 import aiohttp
 
+from fgap.core.http import get_session
+
 _API_URL = "https://api.github.com"
 
 
@@ -98,12 +100,18 @@ async def _github_rest(method: str, url: str, token: str, body: dict | None = No
         "User-Agent": "fgap",
         "X-GitHub-Api-Version": "2022-11-28",
     }
-    timeout = aiohttp.ClientTimeout(total=30)
-    async with aiohttp.ClientSession() as session:
+    session = get_session()
+    own_session = session is None
+    if own_session:
+        session = aiohttp.ClientSession()
+    try:
         async with session.request(
-            method, url, json=body, headers=headers, timeout=timeout,
+            method, url, json=body, headers=headers,
         ) as resp:
             return await resp.json()
+    finally:
+        if own_session:
+            await session.close()
 
 
 async def _handle_edit(

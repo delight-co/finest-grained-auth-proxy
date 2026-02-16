@@ -1,5 +1,7 @@
 import aiohttp
 
+from fgap.core.http import get_session
+
 
 async def execute_graphql(
     query: str,
@@ -10,6 +12,9 @@ async def execute_graphql(
     url: str | None = None,
 ) -> dict:
     """Execute a GraphQL query against the GitHub API.
+
+    Uses the shared HTTP session when available (server context),
+    falls back to creating a temporary session (tests, standalone).
 
     Args:
         query: GraphQL query or mutation string.
@@ -38,13 +43,19 @@ async def execute_graphql(
     if variables:
         body["variables"] = variables
 
-    timeout = aiohttp.ClientTimeout(total=30)
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, json=body, headers=headers, timeout=timeout) as resp:
+    session = get_session()
+    own_session = session is None
+    if own_session:
+        session = aiohttp.ClientSession()
+    try:
+        async with session.post(url, json=body, headers=headers) as resp:
             result = await resp.json()
             if "errors" in result:
                 raise ValueError(f"GraphQL error: {result['errors']}")
             return result
+    finally:
+        if own_session:
+            await session.close()
 
 
 async def get_repository_id(

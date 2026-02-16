@@ -1,5 +1,6 @@
 import aiohttp
 
+from fgap.core.http import get_session
 from fgap.core.masking import mask_value
 from fgap.plugins.base import Plugin
 
@@ -68,10 +69,14 @@ async def _check_token(token: str, api_url: str) -> dict:
         "Accept": "application/vnd.github+json",
         "User-Agent": "fgap",
     }
-    timeout = aiohttp.ClientTimeout(total=10)
-    async with aiohttp.ClientSession() as session:
+    health_timeout = aiohttp.ClientTimeout(total=10)
+    session = get_session()
+    own_session = session is None
+    if own_session:
+        session = aiohttp.ClientSession()
+    try:
         async with session.get(
-            f"{api_url}/user", headers=headers, timeout=timeout,
+            f"{api_url}/user", headers=headers, timeout=health_timeout,
         ) as resp:
             if resp.status == 200:
                 data = await resp.json()
@@ -85,3 +90,6 @@ async def _check_token(token: str, api_url: str) -> dict:
                 }
             text = await resp.text()
             return {"valid": False, "error": f"HTTP {resp.status}: {text}"}
+    finally:
+        if own_session:
+            await session.close()
