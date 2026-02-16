@@ -1,0 +1,45 @@
+{
+  // Port for the proxy server (default: 8766)
+  "port": 8766,
+
+  // Timeout settings (seconds)
+  "timeouts": {
+    "cli": 60,   // CLI subprocess timeout
+    "http": 30   // Outbound HTTP request timeout
+  },
+
+  "plugins": {
+    // GitHub: gh CLI + git smart HTTP proxy
+    "github": {
+      // Credentials are evaluated top-to-bottom, first match wins
+      "credentials": [
+        // Fine-grained PAT for your org
+        {
+          "token": "github_pat_YOUR_ORG_PAT",
+          "resources": ["your-org/*"]
+        },
+
+        // Classic PAT as fallback
+        {
+          "token": "ghp_YOUR_CLASSIC_PAT",
+          "resources": ["*"]
+        }
+      ]
+    },
+
+    // Google: gog CLI (Google Workspace)
+    "google": {
+      "credentials": [
+        {
+          // Password for gog's keyring (~/.config/gogcli/)
+          "keyring_password": "your-keyring-password",
+
+          // Optional: restrict to a specific Google account
+          // "account": "user@gmail.com",
+
+          "resources": ["*"]
+        }
+      ]
+    }
+  }
+}

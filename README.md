@@ -1,0 +1,173 @@
+# finest-grained-auth-proxy (fgap)
+
+A multi-CLI auth proxy that isolates credentials from AI agent sandbox environments.
+
+Successor to [fgp](https://github.com/carrotRakko/github-finest-grained-permission-proxy) (GitHub-only). fgap supports multiple CLI tools via a plugin system.
+
+## How It Works
+
+```
+Sandbox (fgap-gh / fgap-gog wrappers)
+    | HTTP
+Proxy server (fgap)
+    | credential injection
+CLI tools (gh, gog) / GitHub API / github.com (git)
+```
+
+- Wrappers replace `gh` and `gog` inside the sandbox
+- The proxy selects the appropriate credential based on resource patterns
+- Credentials never enter the sandbox environment
+
+## Supported Tools
+
+| Plugin | CLI | Capabilities |
+|--------|-----|-------------|
+| GitHub | `gh` | Issues, PRs, REST API, discussions, sub-issues, git clone/fetch/push |
+| Google | `gog` | Gmail, Calendar, Sheets, Docs, Drive, Contacts |
+
+## Quick Start
+
+### 1. Create Config
+
+```bash
+cp config.example.json5 config.json5
+# Edit config.json5 with your credentials
+chmod 600 config.json5
+```
+
+See [config.example.json5](config.example.json5) for all options.
+
+### 2. Start the Proxy
+
+**With Docker (recommended):**
+
+```bash
+docker compose up -d
+```
+
+**Without Docker:**
+
+```bash
+pip install .
+python main.py --config config.json5
+```
+
+Default port: `8766`
+
+### 3. Install Wrappers (Sandbox Side)
+
+```bash
+# Install fgap-gh and fgap-gog
+curl -fsSL https://raw.githubusercontent.com/delight-co/finest-grained-auth-proxy/main/install.sh | bash
+
+# Or replace gh/gog entirely
+curl -fsSL https://raw.githubusercontent.com/delight-co/finest-grained-auth-proxy/main/install.sh | bash -s -- --replace
+```
+
+Set the proxy URL if not on localhost:
+
+```bash
+export FGAP_PROXY_URL=http://fgap:8766
+```
+
+## Usage (From Sandbox)
+
+### gh commands
+
+```bash
+gh issue list -R owner/repo
+gh pr view 123 -R owner/repo
+gh api repos/owner/repo/issues
+gh auth status
+```
+
+### git operations
+
+```bash
+# Clone via proxy
+git clone http://fgap-host:8766/git/owner/repo.git
+
+# Existing repos: change remote
+git remote set-url origin http://fgap-host:8766/git/owner/repo.git
+```
+
+### gog commands
+
+```bash
+gog gmail search 'newer_than:7d'
+gog calendar events primary
+gog sheets get SHEET_ID 'Tab!A1:D10'
+gog auth list
+```
+
+### Custom commands (not in stock gh)
+
+```bash
+gh discussion list -R owner/repo
+gh discussion create -R owner/repo --title "..." --body "..." --category "General"
+gh sub-issue list 123 -R owner/repo
+gh sub-issue add 100 200 -R owner/repo
+gh issue edit 123 --old "typo" --new "fixed" -R owner/repo
+```
+
+## Config Reference
+
+```json5
+{
+  "port": 8766,
+  "timeouts": {
+    "cli": 60,       // CLI subprocess timeout (seconds)
+    "http": 30        // Outbound HTTP timeout (seconds)
+  },
+  "plugins": {
+    "github": {
+      "credentials": [
+        {
+          "token": "ghp_...",         // GitHub PAT
+          "resources": ["owner/*"]    // Repository patterns
+        }
+      ]
+    },
+    "google": {
+      "credentials": [
+        {
+          "keyring_password": "...",  // gog keyring password
+          "account": "user@...",      // Optional: Google account
+          "resources": ["*"]          // Resource patterns
+        }
+      ]
+    }
+  }
+}
+```
+
+### Resource Patterns
+
+| Pattern | Matches |
+|---------|---------|
+| `owner/repo` | Exact match (case-insensitive) |
+| `owner/*` | All repos of that owner |
+| `*` | Everything (fallback) |
+
+Credentials are evaluated top-to-bottom. First match wins.
+
+## Endpoints
+
+| Endpoint | Purpose |
+|----------|---------|
+| `POST /cli` | Execute a CLI command |
+| `GET /git/{owner}/{repo}.git/...` | Git smart HTTP proxy |
+| `GET /health` | Lightweight health check (for Docker HEALTHCHECK) |
+| `GET /auth/status` | Credential validity check (for debugging) |
+
+## Security
+
+- Credentials stay on the proxy side, invisible to the sandbox
+- Audit logging: all CLI invocations are logged with tool, resource, and exit code
+- Credential masking: secrets are replaced with `***` in all log output
+- Email addresses in `/auth/status` responses are masked
+- **Local network only**: This proxy has no authentication. Do not expose to the internet.
+
+## License
+
+MIT
