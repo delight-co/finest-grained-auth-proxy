@@ -48,7 +48,7 @@ docker compose up -d
 **Without Docker:**
 
 ```bash
-pip install .
+uv pip install .
 python main.py --config config.json5
 ```
 
