@@ -4,6 +4,8 @@ import logging
 import aiohttp
 from aiohttp import web
 
+from fgap.core.http import get_session
+
 logger = logging.getLogger(__name__)
 
 _FORWARDED_HEADERS = ("Content-Type", "Accept", "Content-Encoding")
@@ -56,12 +58,15 @@ async def _proxy_to_github(request, owner, repo, path, token, github_base):
             headers[h] = request.headers[h]
 
     body = await request.read() if request.method == "POST" else None
-    timeout = aiohttp.ClientTimeout(total=60)
 
-    async with aiohttp.ClientSession() as session:
+    session = get_session()
+    own_session = session is None
+    if own_session:
+        session = aiohttp.ClientSession()
+    try:
         async with session.request(
             request.method, github_url,
-            headers=headers, data=body, timeout=timeout,
+            headers=headers, data=body,
         ) as resp:
             response_body = await resp.read()
             response_headers = {}
@@ -73,3 +78,6 @@ async def _proxy_to_github(request, owner, repo, path, token, github_base):
                 status=resp.status,
                 headers=response_headers,
             )
+    finally:
+        if own_session:
+            await session.close()

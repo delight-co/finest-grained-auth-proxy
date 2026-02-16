@@ -85,7 +85,8 @@ async def run(
 
     # Auth command: queries /auth/status instead of /cli
     if cmd == "auth":
-        return await _handle_auth(rest, proxy_url)
+        async with ProxyClient(proxy_url) as client:
+            return await _handle_auth(rest, client)
 
     # Resource detection: --account flag > GOG_ACCOUNT env > "default"
     resource = (
@@ -95,12 +96,12 @@ async def run(
     )
 
     # Call proxy
-    client = ProxyClient(proxy_url)
-    try:
-        result = await client.call_cli("gog", args, resource)
-    except (ConnectionError, ValueError) as e:
-        print(f"Error: {e}", file=sys.stderr)
-        return 1
+    async with ProxyClient(proxy_url) as client:
+        try:
+            result = await client.call_cli("gog", args, resource)
+        except (ConnectionError, ValueError) as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
 
     # Output
     if result["exit_code"] != 0:
@@ -120,7 +121,7 @@ def _has_help_flag(args: list[str]) -> bool:
     return any(a in ("--help", "-h") for a in args)
 
 
-async def _handle_auth(args: list[str], proxy_url: str) -> int:
+async def _handle_auth(args: list[str], client: ProxyClient) -> int:
     if not args or _has_help_flag(args):
         print(AUTH_HELP, end="")
         return 0
@@ -130,7 +131,6 @@ async def _handle_auth(args: list[str], proxy_url: str) -> int:
         print("Run 'fgap-gog auth --help' for usage.", file=sys.stderr)
         return 1
 
-    client = ProxyClient(proxy_url)
     try:
         data = await client.get_auth_status()
     except (ConnectionError, ValueError) as e:

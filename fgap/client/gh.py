@@ -250,7 +250,8 @@ async def run(
 
     # Auth command: queries /auth/status instead of /cli
     if cmd == "auth":
-        return await _handle_auth(rest, proxy_url)
+        async with ProxyClient(proxy_url) as client:
+            return await _handle_auth(rest, client)
 
     # Custom command help (gh doesn't handle these)
     if cmd == "discussion" and (not rest or _has_help_flag(rest)):
@@ -310,12 +311,12 @@ async def run(
             clean_args.extend(["--head", f"{owner}:{branch}"])
 
     # Call proxy
-    client = ProxyClient(proxy_url)
-    try:
-        result = await client.call_cli("gh", clean_args, resource)
-    except (ConnectionError, ValueError) as e:
-        print(f"Error: {e}", file=sys.stderr)
-        return 1
+    async with ProxyClient(proxy_url) as client:
+        try:
+            result = await client.call_cli("gh", clean_args, resource)
+        except (ConnectionError, ValueError) as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
 
     # Output
     if result["exit_code"] != 0:
@@ -331,7 +332,7 @@ async def run(
     return 0
 
 
-async def _handle_auth(args: list[str], proxy_url: str) -> int:
+async def _handle_auth(args: list[str], client: ProxyClient) -> int:
     if not args or _has_help_flag(args):
         print(AUTH_HELP, end="")
         return 0
@@ -341,7 +342,6 @@ async def _handle_auth(args: list[str], proxy_url: str) -> int:
         print("Run 'fgap-gh auth --help' for usage.", file=sys.stderr)
         return 1
 
-    client = ProxyClient(proxy_url)
     try:
         data = await client.get_auth_status()
     except (ConnectionError, ValueError) as e:

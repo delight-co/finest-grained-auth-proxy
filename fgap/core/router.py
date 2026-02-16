@@ -1,9 +1,11 @@
 import logging
 
+import aiohttp
 from aiohttp import web
 
 from fgap.core.credential import select_credential
 from fgap.core.executor import execute_cli
+from fgap.core.http import close_session, set_session
 from fgap.core.policy import evaluate
 from fgap.plugins.base import Plugin
 
@@ -23,6 +25,21 @@ def create_routes(config: dict, plugins: dict[str, Plugin]) -> web.Application:
     Accepts plugins directly — use this in tests.
     """
     app = web.Application()
+
+    # Shared HTTP session lifecycle
+    timeouts = config.get("timeouts", {})
+    http_timeout = timeouts.get("http", 30)
+    cli_timeout = timeouts.get("cli", 60)
+
+    async def session_ctx(app):
+        session = aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=http_timeout),
+        )
+        set_session(session)
+        yield
+        await close_session()
+
+    app.cleanup_ctx.append(session_ctx)
 
     async def handle_cli(request: web.Request) -> web.Response:
         data = await request.json()
@@ -66,7 +83,7 @@ def create_routes(config: dict, plugins: dict[str, Plugin]) -> web.Application:
                     return web.json_response(result)
 
             # Execute CLI subprocess
-            result = await execute_cli(tool, args, credential["env"])
+            result = await execute_cli(tool, args, credential["env"], timeout=cli_timeout)
             logger.info(
                 "cli tool=%s resource=%s cmd=%s exit_code=%d",
                 tool, resource, cmd, result["exit_code"],
