@@ -14,5 +14,8 @@ dev = [
     "pytest-asyncio>=0.23",
 ]
 
+[project.scripts]
+fgap-gh = "fgap.client.gh:main"
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
