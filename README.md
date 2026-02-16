@@ -173,9 +173,22 @@ Credentials are evaluated top-to-bottom. First match wins.
 
 ## Limitations
 
-- **Raw GraphQL blocked**: `gh api graphql` is rejected — use high-level commands (issue, pr, discussion, sub-issue) instead
+All commands require a resource (owner/repo) to select the right credential. Commands that aren't repo-scoped won't work:
+
+| Blocked command | Reason |
+|----------------|--------|
+| `gh search *` | Cross-repo search; `--repo` flag gets consumed by resource detection |
+| `gh gist *` | User-scoped, no repo context |
+| `gh status` | User dashboard (cross-repo) |
+| `gh ssh-key *` / `gh gpg-key *` | User-scoped |
+| `gh codespace *` | User-scoped |
+| `gh api /user`, `/orgs/...`, `/search/...` | Non-`repos/` endpoints — no repo to match |
+| `gh api graphql` | Raw GraphQL blocked — use high-level commands (issue, pr, discussion, sub-issue) |
+
+Other limitations:
+
 - **Git LFS not supported**: Only basic git smart HTTP protocol (clone/fetch/push)
-- **REST API limited to `repos/` endpoints**: `gh api /user`, `/orgs/...` etc. won't work (cannot determine which credential to use)
+- **Repo-scoped commands need context**: Either use `-R owner/repo`, or run from inside a git repo with a remote
 
 ## License
 
