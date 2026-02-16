@@ -126,6 +126,20 @@ class TestHealthEndpoint:
         assert resp.status == 200
         data = await resp.json()
         assert data["status"] == "ok"
+
+    async def test_health_is_lightweight(self, echo_client):
+        """Health endpoint should NOT call plugin health_check."""
+        resp = await echo_client.get("/health")
+        data = await resp.json()
+        assert "plugins" not in data
+
+
+class TestAuthStatusEndpoint:
+    async def test_returns_plugin_statuses(self, echo_client):
+        resp = await echo_client.get("/auth/status")
+        assert resp.status == 200
+        data = await resp.json()
+        assert "plugins" in data
         assert "echo" in data["plugins"]
 
 

@@ -1,6 +1,11 @@
 import logging
 
-from fgap.core.masking import MaskingFormatter, collect_secrets, mask_secrets
+from fgap.core.masking import (
+    MaskingFormatter,
+    collect_secrets,
+    mask_secrets,
+    mask_value,
+)
 
 
 class TestCollectSecrets:
@@ -81,6 +86,23 @@ class TestMaskSecrets:
 
     def test_partial_match(self):
         assert mask_secrets("ghp_abc123_extra", {"ghp_abc123"}) == "***_extra"
+
+
+class TestMaskValue:
+    def test_long_value(self):
+        assert mask_value("ghp_abc123xyz") == "ghp_abc1***"
+
+    def test_exactly_prefix_length(self):
+        assert mask_value("12345678") == "***"
+
+    def test_shorter_than_prefix(self):
+        assert mask_value("short") == "***"
+
+    def test_custom_prefix(self):
+        assert mask_value("test-password-123", visible_prefix=4) == "test***"
+
+    def test_empty_string(self):
+        assert mask_value("") == "***"
 
 
 class TestMaskingFormatter:

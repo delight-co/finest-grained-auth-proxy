@@ -37,6 +37,16 @@ def _walk(obj, secrets: set[str]) -> None:
             _walk(item, secrets)
 
 
+def mask_value(value: str, visible_prefix: int = 8) -> str:
+    """Mask a credential value, keeping the first few characters visible.
+
+    Example: mask_value("ghp_abc123xyz") -> "ghp_abc1***"
+    """
+    if len(value) <= visible_prefix:
+        return "***"
+    return value[:visible_prefix] + "***"
+
+
 def mask_secrets(text: str, secrets: set[str]) -> str:
     """Replace all secret values in text with '***'."""
     for secret in secrets:
