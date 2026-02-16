@@ -137,7 +137,7 @@ class TestTransformBodyFile:
 async def mock_proxy():
     """Mock fgap proxy."""
     app = web.Application()
-    state = {"responses": [], "requests": []}
+    state = {"responses": [], "requests": [], "auth_status": None}
 
     async def handle_cli(request):
         data = await request.json()
@@ -146,7 +146,13 @@ async def mock_proxy():
             return state["responses"].pop(0)
         return web.json_response({"exit_code": 0, "stdout": "", "stderr": ""})
 
+    async def handle_auth_status(request):
+        if state["auth_status"]:
+            return state["auth_status"]
+        return web.json_response({"plugins": {}})
+
     app.router.add_post("/cli", handle_cli)
+    app.router.add_get("/auth/status", handle_auth_status)
     async with TestServer(app) as server:
         yield server, state
 
@@ -460,3 +466,70 @@ class TestFullFlow:
         assert code == 0
         req = state["requests"][0]
         assert req["args"] == ["sub-issue", "list", "5"]
+
+
+# =========================================================================
+# run(): auth command
+# =========================================================================
+
+
+class TestAuth:
+    async def test_auth_help(self, capsys):
+        code = await run(["auth"], "http://unused")
+        assert code == 0
+        assert "auth status" in capsys.readouterr().out
+
+    async def test_auth_help_flag(self, capsys):
+        code = await run(["auth", "--help"], "http://unused")
+        assert code == 0
+
+    async def test_auth_unknown_subcommand(self, capsys):
+        code = await run(["auth", "login"], "http://unused")
+        assert code == 1
+        assert "Unknown" in capsys.readouterr().err
+
+    async def test_auth_status_valid(self, mock_proxy, capsys):
+        server, state = mock_proxy
+        state["auth_status"] = web.json_response({"plugins": {"github": [
+            {
+                "masked_token": "ghp_abc1***",
+                "valid": True,
+                "user": "testuser",
+                "scopes": "repo",
+                "rate_limit_remaining": "4999",
+                "resources": ["*"],
+            },
+        ]}})
+        code = await run(["auth", "status"], _url(server))
+        assert code == 0
+        out = capsys.readouterr().out
+        assert "ghp_abc1***" in out
+        assert "testuser" in out
+        assert "repo" in out
+
+    async def test_auth_status_invalid(self, mock_proxy, capsys):
+        server, state = mock_proxy
+        state["auth_status"] = web.json_response({"plugins": {"github": [
+            {
+                "masked_token": "ghp_bad_***",
+                "valid": False,
+                "error": "Bad credentials",
+                "resources": ["*"],
+            },
+        ]}})
+        code = await run(["auth", "status"], _url(server))
+        assert code == 0
+        out = capsys.readouterr().out
+        assert "Bad credentials" in out
+
+    async def test_auth_status_no_creds(self, mock_proxy, capsys):
+        server, state = mock_proxy
+        state["auth_status"] = web.json_response({"plugins": {}})
+        code = await run(["auth", "status"], _url(server))
+        assert code == 0
+        assert "No GitHub" in capsys.readouterr().out
+
+    async def test_auth_status_connection_error(self, capsys):
+        code = await run(["auth", "status"], "http://127.0.0.1:1")
+        assert code == 1
+        assert "Cannot connect" in capsys.readouterr().err
