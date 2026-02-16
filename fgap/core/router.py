@@ -81,14 +81,18 @@ def create_routes(config: dict, plugins: dict[str, Plugin]) -> web.Application:
             raise
 
     async def handle_health(request: web.Request) -> web.Response:
+        return web.json_response({"status": "ok"})
+
+    async def handle_auth_status(request: web.Request) -> web.Response:
         statuses = {}
         for name, plugin in plugins.items():
             plugin_config = config.get("plugins", {}).get(name, {})
             statuses[name] = await plugin.health_check(plugin_config)
-        return web.json_response({"status": "ok", "plugins": statuses})
+        return web.json_response({"plugins": statuses})
 
     app.router.add_post("/cli", handle_cli)
     app.router.add_get("/health", handle_health)
+    app.router.add_get("/auth/status", handle_auth_status)
 
     # Plugin-specific routes (e.g. git smart HTTP proxy)
     for name, plugin in plugins.items():

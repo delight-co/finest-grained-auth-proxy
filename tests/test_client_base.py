@@ -25,7 +25,13 @@ async def mock_proxy():
             )
         return state["responses"].pop(0)
 
+    async def handle_auth_status(request):
+        if state.get("auth_status"):
+            return state["auth_status"]
+        return web.json_response({"plugins": {}})
+
     app.router.add_post("/cli", handle_cli)
+    app.router.add_get("/auth/status", handle_auth_status)
     async with TestServer(app) as server:
         yield server, state
 
@@ -176,3 +182,32 @@ class TestErrorHandling:
 
             with pytest.raises(TimeoutError):
                 await client.call_cli("gh", ["issue", "list"], "o/r")
+
+
+# =========================================================================
+# get_auth_status
+# =========================================================================
+
+
+class TestGetAuthStatus:
+    async def test_returns_data(self, mock_proxy):
+        server, state = mock_proxy
+        state["auth_status"] = web.json_response({
+            "plugins": {"github": [{"valid": True, "masked_token": "ghp_***"}]},
+        })
+        client = _client(server)
+
+        result = await client.get_auth_status()
+        assert result["plugins"]["github"][0]["valid"] is True
+
+    async def test_connection_error(self):
+        client = ProxyClient("http://127.0.0.1:1")
+        with pytest.raises(ConnectionError, match="Cannot connect"):
+            await client.get_auth_status()
+
+    async def test_error_status(self, mock_proxy):
+        server, state = mock_proxy
+        state["auth_status"] = web.Response(text="Server Error", status=500)
+        client = _client(server)
+        with pytest.raises(ValueError, match="500"):
+            await client.get_auth_status()

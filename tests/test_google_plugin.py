@@ -90,9 +90,16 @@ class TestGooglePluginRouting:
             })
             assert resp.status == 403
 
-    async def test_health_includes_google(self, google_client):
+    async def test_health_is_lightweight(self, google_client):
         resp = await google_client.get("/health")
         assert resp.status == 200
         data = await resp.json()
         assert data["status"] == "ok"
+        assert "plugins" not in data
+
+    async def test_auth_status_includes_google(self, google_client):
+        resp = await google_client.get("/auth/status")
+        assert resp.status == 200
+        data = await resp.json()
+        assert "plugins" in data
         assert "google" in data["plugins"]

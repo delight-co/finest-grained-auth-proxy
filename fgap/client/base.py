@@ -70,3 +70,29 @@ class ProxyClient:
             raise ConnectionError(
                 f"Cannot connect to proxy at {self.proxy_url}: {e}"
             ) from e
+
+    async def get_auth_status(self) -> dict:
+        """Get credential status from the proxy.
+
+        Returns:
+            {"plugins": {"github": [...], "google": [...]}}
+
+        Raises:
+            ConnectionError: Cannot reach the proxy.
+            ValueError: Proxy returned an error or invalid response.
+        """
+        url = f"{self.proxy_url}/auth/status"
+        client_timeout = aiohttp.ClientTimeout(total=self.timeout)
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, timeout=client_timeout) as resp:
+                    if resp.status != 200:
+                        text = await resp.text()
+                        raise ValueError(
+                            f"Proxy error (status {resp.status}): {text}"
+                        )
+                    return await resp.json()
+        except aiohttp.ClientConnectionError as e:
+            raise ConnectionError(
+                f"Cannot connect to proxy at {self.proxy_url}: {e}"
+            ) from e

@@ -1,4 +1,9 @@
+import aiohttp
+
+from fgap.core.masking import mask_value
 from fgap.plugins.base import Plugin
+
+_GITHUB_API_URL = "https://api.github.com"
 
 
 class GitHubPlugin(Plugin):
@@ -32,3 +37,51 @@ class GitHubPlugin(Plugin):
             "discussion": execute_discussion,
             "sub-issue": execute_sub_issue,
         }
+
+    async def health_check(
+        self, config: dict, *, _api_url: str = _GITHUB_API_URL,
+    ) -> list[dict]:
+        """Check PAT validity via GitHub REST API.
+
+        For each credential, calls GET /user to verify the token
+        and reports scopes and rate limit.
+        """
+        results = []
+        for cred in config.get("credentials", []):
+            token = cred.get("token", "")
+            entry = {
+                "masked_token": mask_value(token),
+                "resources": cred.get("resources", []),
+            }
+            try:
+                status = await _check_token(token, _api_url)
+                entry.update(status)
+            except Exception as e:
+                entry.update({"valid": False, "error": str(e)})
+            results.append(entry)
+        return results
+
+
+async def _check_token(token: str, api_url: str) -> dict:
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "fgap",
+    }
+    timeout = aiohttp.ClientTimeout(total=10)
+    async with aiohttp.ClientSession() as session:
+        async with session.get(
+            f"{api_url}/user", headers=headers, timeout=timeout,
+        ) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                return {
+                    "valid": True,
+                    "user": data.get("login", ""),
+                    "scopes": resp.headers.get("X-OAuth-Scopes", ""),
+                    "rate_limit_remaining": resp.headers.get(
+                        "X-RateLimit-Remaining", "",
+                    ),
+                }
+            text = await resp.text()
+            return {"valid": False, "error": f"HTTP {resp.status}: {text}"}

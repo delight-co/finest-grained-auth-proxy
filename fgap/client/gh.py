@@ -154,9 +154,17 @@ COMMANDS
   api         Call GitHub REST API (via gh)
   discussion  Work with discussions (custom)
   sub-issue   Work with sub-issues (custom)
+  auth        Show authentication status
 
 All commands are routed through the fgap proxy for credential injection.
 Run 'fgap-gh <command> --help' for more information on a command.
+"""
+
+AUTH_HELP = """\
+Display authentication status for configured GitHub credentials.
+
+USAGE
+  fgap-gh auth status
 """
 
 DISCUSSION_HELP = """\
@@ -240,6 +248,10 @@ async def run(
     cmd = args[0]
     rest = args[1:]
 
+    # Auth command: queries /auth/status instead of /cli
+    if cmd == "auth":
+        return await _handle_auth(rest, proxy_url)
+
     # Custom command help (gh doesn't handle these)
     if cmd == "discussion" and (not rest or _has_help_flag(rest)):
         print(DISCUSSION_HELP, end="")
@@ -315,6 +327,49 @@ async def run(
         print(result["stderr"], file=sys.stderr)
     if result["stdout"]:
         print(result["stdout"])
+
+    return 0
+
+
+async def _handle_auth(args: list[str], proxy_url: str) -> int:
+    if not args or _has_help_flag(args):
+        print(AUTH_HELP, end="")
+        return 0
+
+    if args[0] != "status":
+        print(f"Error: Unknown auth command: {args[0]}", file=sys.stderr)
+        print("Run 'fgap-gh auth --help' for usage.", file=sys.stderr)
+        return 1
+
+    client = ProxyClient(proxy_url)
+    try:
+        data = await client.get_auth_status()
+    except (ConnectionError, ValueError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+    creds = data.get("plugins", {}).get("github", [])
+    if not creds:
+        print("No GitHub credentials configured.")
+        return 0
+
+    for i, cred in enumerate(creds):
+        valid = cred.get("valid", False)
+        token = cred.get("masked_token", "***")
+        mark = "\u2713" if valid else "\u2717"
+        print(f"  {mark} [{i}] {token}")
+        if valid:
+            if cred.get("user"):
+                print(f"      User: {cred['user']}")
+            if cred.get("scopes"):
+                print(f"      Scopes: {cred['scopes']}")
+            if cred.get("rate_limit_remaining"):
+                print(f"      Rate limit remaining: {cred['rate_limit_remaining']}")
+        else:
+            print(f"      Error: {cred.get('error', 'Unknown error')}")
+        resources = cred.get("resources", [])
+        if resources:
+            print(f"      Resources: {', '.join(resources)}")
 
     return 0
 
