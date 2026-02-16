@@ -94,5 +94,11 @@ def create_app(config: dict) -> web.Application:
     except (ImportError, ValueError):
         pass
 
+    try:
+        from fgap.plugins.google import GooglePlugin
+        register_plugin(GooglePlugin)
+    except (ImportError, ValueError):
+        pass
+
     plugins = discover_plugins(config)
     return create_routes(config, plugins)
