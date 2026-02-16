@@ -185,7 +185,7 @@ finest-grained-auth-proxy/
 │       ├── gh.py                    # gh wrapper (fgh rewrite in Python)
 │       └── gog.py                   # gog wrapper
 │
-└── tests/                           # Future
+└── tests/                           # Mirrors fgap/ structure
 ```
 
 ### Plugin Interface
