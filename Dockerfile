@@ -1,5 +1,7 @@
 FROM python:3.11-slim
 
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
 RUN apt-get update && apt-get install -y --no-install-recommends git \
     && rm -rf /var/lib/apt/lists/*
 
@@ -9,7 +11,7 @@ COPY pyproject.toml .
 COPY fgap/ fgap/
 COPY main.py .
 
-RUN pip install --no-cache-dir .
+RUN uv pip install --system --no-cache .
 
 EXPOSE 8766
 
