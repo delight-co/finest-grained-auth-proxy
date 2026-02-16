@@ -41,14 +41,6 @@ See [config.example.json5](config.example.json5) for all options.
 
 ### 2. Start the Proxy
 
-**With Docker (recommended):**
-
-```bash
-docker compose up -d
-```
-
-**Without Docker:**
-
 Requires [gh](https://cli.github.com/) and/or [gog](https://github.com/steipete/gogcli) installed on the host, depending on which plugins you use.
 
 ```bash
