@@ -8,7 +8,7 @@ from fgap.core.http import get_session
 
 logger = logging.getLogger(__name__)
 
-_FORWARDED_HEADERS = ("Content-Type", "Accept", "Content-Encoding")
+_FORWARDED_HEADERS = ("Content-Type", "Accept")
 _RESPONSE_HEADERS = ("Content-Type", "Cache-Control")
 
 
