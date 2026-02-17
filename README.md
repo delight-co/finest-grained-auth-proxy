@@ -44,8 +44,7 @@ See [config.example.json5](config.example.json5) for all options.
 Requires [gh](https://cli.github.com/) and/or [gog](https://github.com/steipete/gogcli) installed on the host, depending on which plugins you use.
 
 ```bash
-uv pip install .
-python main.py --config config.json5
+uv run python main.py --config config.json5
 ```
 
 Default port: `8766`
