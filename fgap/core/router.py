@@ -24,7 +24,7 @@ def create_routes(config: dict, plugins: dict[str, Plugin]) -> web.Application:
 
     Accepts plugins directly — use this in tests.
     """
-    app = web.Application()
+    app = web.Application(client_max_size=0)
 
     # Shared HTTP session lifecycle
     timeouts = config.get("timeouts", {})
