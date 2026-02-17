@@ -11,17 +11,38 @@
   "plugins": {
     // GitHub: gh CLI + git smart HTTP proxy
     "github": {
-      // Credentials are evaluated top-to-bottom, first match wins
+      // Credentials are evaluated top-to-bottom, first match wins.
+      //
+      // Recommended strategy:
+      //   1. Fine-grained PATs scoped to specific orgs/users (least privilege)
+      //   2. Classic PAT for repos that don't support fine-grained PATs
+      //   3. Broad fine-grained PAT as fallback for public repos
       "credentials": [
-        // Fine-grained PAT for your org
+        // Fine-grained PAT scoped to your org
         {
           "token": "github_pat_YOUR_ORG_PAT",
           "resources": ["your-org/*"]
         },
 
-        // Classic PAT as fallback
+        // Fine-grained PAT scoped to your personal repos
+        {
+          "token": "github_pat_YOUR_PERSONAL_PAT",
+          "resources": ["your-username/*"]
+        },
+
+        // Classic PAT for external repos that need write access
+        // (some orgs/repos don't accept fine-grained PATs from outside collaborators)
         {
           "token": "ghp_YOUR_CLASSIC_PAT",
+          "resources": [
+            "some-org/specific-repo",
+            "another-org/another-repo"
+          ]
+        },
+
+        // Broad fine-grained PAT as fallback (e.g. for reading public repos)
+        {
+          "token": "github_pat_YOUR_FALLBACK_PAT",
           "resources": ["*"]
         }
       ]

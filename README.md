@@ -116,11 +116,12 @@ gh issue edit 123 --old "typo" --new "fixed" -R owner/repo
   },
   "plugins": {
     "github": {
+      // Credentials evaluated top-to-bottom, first match wins
       "credentials": [
-        {
-          "token": "ghp_...",         // GitHub PAT
-          "resources": ["owner/*"]    // Repository patterns
-        }
+        { "token": "github_pat_ORG",      "resources": ["your-org/*"] },
+        { "token": "github_pat_PERSONAL", "resources": ["your-username/*"] },
+        { "token": "ghp_CLASSIC",         "resources": ["some-org/repo"] },
+        { "token": "github_pat_FALLBACK", "resources": ["*"] }
       ]
     },
     "google": {
