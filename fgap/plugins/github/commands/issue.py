@@ -1,7 +1,7 @@
 """Issue command: partial body replacement for issues and comments via REST API.
 
 Handles:
-- issue edit <number> --old "..." --new "..." [--replace-all]
+- issue edit <number> --old "..." --new "..." [--replace-all] [--title "..."]
 - issue comment edit <comment-id> --old "..." --new "..." [--replace-all]
 
 Everything else falls through to gh CLI (returns None).
@@ -38,15 +38,16 @@ def _has_old_and_new(args: list[str]) -> bool:
     return any(a == "--old" for a in args) and any(a == "--new" for a in args)
 
 
-def _parse_edit_args(args: list[str]) -> tuple[list[str], str, str, bool]:
-    """Parse --old, --new, --replace-all from args.
+def _parse_edit_args(args: list[str]) -> tuple[list[str], str, str, bool, str | None]:
+    """Parse --old, --new, --replace-all, --title from args.
 
-    Returns (positional_args, old, new, replace_all).
+    Returns (positional_args, old, new, replace_all, title).
     """
     positional = []
     old = None
     new = None
     replace_all = False
+    title = None
 
     i = 0
     while i < len(args):
@@ -63,11 +64,16 @@ def _parse_edit_args(args: list[str]) -> tuple[list[str], str, str, bool]:
         elif args[i] == "--replace-all":
             replace_all = True
             i += 1
+        elif args[i] == "--title":
+            if i + 1 >= len(args):
+                raise ValueError("--title requires a value")
+            title = args[i + 1]
+            i += 2
         else:
             positional.append(args[i])
             i += 1
 
-    return positional, old, new, replace_all
+    return positional, old, new, replace_all, title
 
 
 def _partial_replace(body: str, old: str, new: str, replace_all: bool) -> str:
@@ -118,11 +124,11 @@ async def _handle_edit(
     args: list[str], owner: str, repo: str, token: str,
     api_url: str | None = None,
 ) -> dict:
-    """Handle `issue edit <number> --old "..." --new "..."`."""
+    """Handle `issue edit <number> --old "..." --new "..." [--title "..."]`."""
     api_url = api_url or _API_URL
 
     try:
-        positional, old, new, replace_all = _parse_edit_args(args)
+        positional, old, new, replace_all, title = _parse_edit_args(args)
     except ValueError as e:
         return {"exit_code": 1, "stdout": "", "stderr": str(e)}
 
@@ -140,7 +146,10 @@ async def _handle_edit(
         issue_data = await _github_rest("GET", url, token)
         current_body = issue_data.get("body") or ""
         updated_body = _partial_replace(current_body, old, new, replace_all)
-        await _github_rest("PATCH", url, token, body={"body": updated_body})
+        patch_payload: dict[str, str] = {"body": updated_body}
+        if title is not None:
+            patch_payload["title"] = title
+        await _github_rest("PATCH", url, token, body=patch_payload)
     except ValueError as e:
         return {"exit_code": 1, "stdout": "", "stderr": str(e)}
 
@@ -155,7 +164,7 @@ async def _handle_comment_edit(
     api_url = api_url or _API_URL
 
     try:
-        positional, old, new, replace_all = _parse_edit_args(args)
+        positional, old, new, replace_all, _title = _parse_edit_args(args)
     except ValueError as e:
         return {"exit_code": 1, "stdout": "", "stderr": str(e)}
 

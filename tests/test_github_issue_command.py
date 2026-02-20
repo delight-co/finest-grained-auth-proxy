@@ -20,14 +20,15 @@ from fgap.plugins.github.commands.issue import (
 
 class TestParseEditArgs:
     def test_basic(self):
-        pos, old, new, ra = _parse_edit_args(["42", "--old", "x", "--new", "y"])
+        pos, old, new, ra, title = _parse_edit_args(["42", "--old", "x", "--new", "y"])
         assert pos == ["42"]
         assert old == "x"
         assert new == "y"
         assert ra is False
+        assert title is None
 
     def test_replace_all(self):
-        _, _, _, ra = _parse_edit_args(["1", "--old", "a", "--new", "b", "--replace-all"])
+        _, _, _, ra, _ = _parse_edit_args(["1", "--old", "a", "--new", "b", "--replace-all"])
         assert ra is True
 
     def test_old_missing_value(self):
@@ -39,9 +40,17 @@ class TestParseEditArgs:
             _parse_edit_args(["1", "--new"])
 
     def test_multiword_values(self):
-        _, old, new, _ = _parse_edit_args(["1", "--old", "hello world", "--new", "goodbye world"])
+        _, old, new, _, _ = _parse_edit_args(["1", "--old", "hello world", "--new", "goodbye world"])
         assert old == "hello world"
         assert new == "goodbye world"
+
+    def test_title(self):
+        _, _, _, _, title = _parse_edit_args(["1", "--old", "x", "--new", "y", "--title", "New Title"])
+        assert title == "New Title"
+
+    def test_title_missing_value(self):
+        with pytest.raises(ValueError, match="--title requires"):
+            _parse_edit_args(["1", "--old", "x", "--new", "y", "--title"])
 
 
 class TestPartialReplace:
@@ -187,6 +196,31 @@ class TestHandleEdit:
         )
         assert result["exit_code"] == 1
         assert "Invalid issue number" in result["stderr"]
+
+    async def test_title_included_in_patch(self, mock_github_api):
+        server, state = mock_github_api
+        state["issues"]["42"] = {"body": "hello old world"}
+        api_url = str(server.make_url(""))
+
+        result = await _handle_edit(
+            ["42", "--old", "old", "--new", "new", "--title", "New Title"],
+            "owner", "repo", "tok", api_url=api_url,
+        )
+        assert result["exit_code"] == 0
+        assert state["issues"]["42"]["body"] == "hello new world"
+        assert state["issues"]["42"]["title"] == "New Title"
+
+    async def test_title_omitted_when_not_specified(self, mock_github_api):
+        server, state = mock_github_api
+        state["issues"]["42"] = {"body": "hello old world"}
+        api_url = str(server.make_url(""))
+
+        result = await _handle_edit(
+            ["42", "--old", "old", "--new", "new"], "owner", "repo", "tok",
+            api_url=api_url,
+        )
+        assert result["exit_code"] == 0
+        assert "title" not in state["issues"]["42"]
 
     async def test_null_body_treated_as_empty(self, mock_github_api):
         server, state = mock_github_api
