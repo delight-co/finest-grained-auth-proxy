@@ -31,10 +31,12 @@ class GitHubPlugin(Plugin):
     def get_commands(self) -> dict[str, callable]:
         from .commands.discussion import execute as execute_discussion
         from .commands.issue import execute as execute_issue
+        from .commands.pr import execute as execute_pr
         from .commands.sub_issue import execute as execute_sub_issue
 
         return {
             "issue": execute_issue,
+            "pr": execute_pr,
             "discussion": execute_discussion,
             "sub-issue": execute_sub_issue,
         }
