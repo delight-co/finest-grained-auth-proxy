@@ -2,11 +2,18 @@
 
 Handles:
 - pr edit <number> --old "..." --new "..." [--replace-all] [--title "..."]
+- pr comment edit <comment-id> --old "..." --new "..." [--replace-all]
 
 Everything else falls through to gh CLI (returns None).
 """
 
-from .issue import _github_rest, _has_old_and_new, _parse_edit_args, _partial_replace
+from .issue import (
+    _github_rest,
+    _handle_comment_edit,
+    _has_old_and_new,
+    _parse_edit_args,
+    _partial_replace,
+)
 
 _API_URL = "https://api.github.com"
 
@@ -23,6 +30,10 @@ async def execute(args: list[str], resource: str, credential: dict) -> dict | No
 
     if subcmd == "edit" and _has_old_and_new(rest):
         return await _handle_edit(rest, owner, repo, token)
+
+    if subcmd == "comment" and len(rest) > 0 and rest[0] == "edit":
+        if _has_old_and_new(rest[1:]):
+            return await _handle_comment_edit(rest[1:], owner, repo, token)
 
     return None
 

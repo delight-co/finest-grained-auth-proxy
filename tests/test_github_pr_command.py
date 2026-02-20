@@ -25,6 +25,12 @@ class TestExecuteFallthrough:
     async def test_edit_without_old_new(self):
         assert await execute(["edit", "42"], "owner/repo", {"env": {"GH_TOKEN": "t"}}) is None
 
+    async def test_comment_without_old_new(self):
+        result = await execute(
+            ["comment", "edit", "123"], "owner/repo", {"env": {"GH_TOKEN": "t"}},
+        )
+        assert result is None
+
 
 # =========================================================================
 # Handler tests with mock GitHub API
@@ -37,6 +43,7 @@ async def mock_github_api():
     app = web.Application()
     state = {
         "pulls": {},
+        "comments": {},
         "requests": [],
     }
 
@@ -55,6 +62,22 @@ async def mock_github_api():
             return web.json_response(data)
         return web.Response(status=405)
 
+    async def handle_comment(request):
+        comment_id = request.match_info["comment_id"]
+        state["requests"].append({
+            "method": request.method,
+            "path": request.path,
+        })
+        if request.method == "GET":
+            data = state["comments"].get(comment_id, {"body": ""})
+            return web.json_response(data)
+        if request.method == "PATCH":
+            data = await request.json()
+            state["comments"][comment_id] = data
+            return web.json_response(data)
+        return web.Response(status=405)
+
+    app.router.add_route("*", "/repos/{owner}/{repo}/issues/comments/{comment_id}", handle_comment)
     app.router.add_route("*", "/repos/{owner}/{repo}/pulls/{number}", handle_pr)
 
     async with TestServer(app) as server:
@@ -165,6 +188,43 @@ class TestHandleEdit:
         assert state["requests"][0]["method"] == "GET"
         assert "/own/rep/pulls/7" in state["requests"][0]["path"]
         assert state["requests"][1]["method"] == "PATCH"
+
+
+class TestHandleCommentEdit:
+    """PR comment edit reuses issue._handle_comment_edit (same API endpoint)."""
+
+    async def test_replaces_body(self, mock_github_api):
+        from fgap.plugins.github.commands.issue import _handle_comment_edit
+
+        server, state = mock_github_api
+        state["comments"]["999"] = {"body": "fix typo plz"}
+        api_url = str(server.make_url(""))
+
+        result = await _handle_comment_edit(
+            ["999", "--old", "plz", "--new", "please"], "owner", "repo", "tok",
+            api_url=api_url,
+        )
+        assert result["exit_code"] == 0
+        assert state["comments"]["999"]["body"] == "fix typo please"
+
+    async def test_routing_via_execute(self, mock_github_api):
+        """Verify `pr comment edit` routes to comment edit handler."""
+        server, state = mock_github_api
+        state["comments"]["456"] = {"body": "old text"}
+
+        import fgap.plugins.github.commands.issue as issue_mod
+        original_url = issue_mod._API_URL
+        issue_mod._API_URL = str(server.make_url(""))
+        try:
+            result = await execute(
+                ["comment", "edit", "456", "--old", "old", "--new", "new"],
+                "owner/repo", {"env": {"GH_TOKEN": "tok"}},
+            )
+            assert result is not None
+            assert result["exit_code"] == 0
+            assert state["comments"]["456"]["body"] == "new text"
+        finally:
+            issue_mod._API_URL = original_url
 
 
 # =========================================================================
