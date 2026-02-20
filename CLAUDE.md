@@ -36,3 +36,16 @@ Use the public-facing format for all commits, PRs, issues, and comments:
 ```
 
 Do NOT use internal formats that reference specific environments or real names.
+
+## Development
+
+This project uses **uv** for dependency management.
+
+**Do NOT use `uv pip install` or `pip install`.** Instead:
+
+```bash
+uv sync --extra dev   # Install all dependencies (including test tools)
+uv run pytest         # Run tests
+```
+
+If a command fails with "module not found", check `pyproject.toml` for the correct optional-dependency group and run `uv sync` — never install packages manually.
