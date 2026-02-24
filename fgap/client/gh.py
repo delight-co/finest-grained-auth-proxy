@@ -110,7 +110,12 @@ def strip_repo_flag(args: list[str]) -> list[str]:
 
 
 def transform_body_file(args: list[str]) -> list[str]:
-    """Convert ``--body-file``/``-F`` to ``--body`` with file contents."""
+    """Convert ``--body-file`` to ``--body`` with file contents.
+
+    Only handles ``--body-file`` (long form). ``-F`` is NOT ``--body-file``;
+    in upstream ``gh``, ``-F`` is short for ``--field`` (typed API parameter)
+    and must be passed through to the proxy-side ``gh`` for type inference.
+    """
     result = []
     skip_next = False
     for i, arg in enumerate(args):
@@ -119,13 +124,11 @@ def transform_body_file(args: list[str]) -> list[str]:
             continue
         next_arg = args[i + 1] if i + 1 < len(args) else None
 
-        if arg in ("--body-file", "-F") and next_arg is not None:
+        if arg == "--body-file" and next_arg is not None:
             result.extend(["--body", _read_file(next_arg)])
             skip_next = True
         elif arg.startswith("--body-file="):
             result.extend(["--body", _read_file(arg[len("--body-file="):])])
-        elif arg.startswith("-F") and len(arg) > 2:
-            result.extend(["--body", _read_file(arg[2:])])
         else:
             result.append(arg)
     return result

@@ -107,17 +107,20 @@ class TestTransformBodyFile:
         result = transform_body_file(["issue", "create", f"--body-file={f}"])
         assert result == ["issue", "create", "--body", "content"]
 
-    def test_dash_f_space(self, tmp_path):
-        f = tmp_path / "body.md"
-        f.write_text("content")
-        result = transform_body_file(["issue", "create", "-F", str(f)])
-        assert result == ["issue", "create", "--body", "content"]
+    def test_dash_f_passed_through(self):
+        """-F is --field (not --body-file) and must pass through to proxy-side gh."""
+        args = ["api", "repos/o/r/issues", "-X", "POST", "-F", "in_reply_to=123"]
+        assert transform_body_file(args) == args
 
-    def test_dash_f_attached(self, tmp_path):
-        f = tmp_path / "body.md"
-        f.write_text("content")
-        result = transform_body_file(["issue", "create", f"-F{f}"])
-        assert result == ["issue", "create", "--body", "content"]
+    def test_dash_f_attached_passed_through(self):
+        """-Fkey=value must also pass through."""
+        args = ["api", "repos/o/r/issues", "-X", "POST", "-Fin_reply_to=123"]
+        assert transform_body_file(args) == args
+
+    def test_dash_f_stdin_passed_through(self):
+        """-F - (stdin) must pass through, not be treated as a file path."""
+        args = ["pr", "comment", "123", "-F", "-"]
+        assert transform_body_file(args) == args
 
     def test_file_not_found(self):
         with pytest.raises(ValueError, match="File not found"):
