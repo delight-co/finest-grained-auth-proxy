@@ -1,3 +1,5 @@
+import io
+
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestServer
@@ -117,10 +119,12 @@ class TestTransformBodyFile:
         args = ["api", "repos/o/r/issues", "-X", "POST", "-Fin_reply_to=123"]
         assert transform_body_file(args) == args
 
-    def test_dash_f_stdin_passed_through(self):
-        """-F - (stdin) must pass through, not be treated as a file path."""
+    def test_dash_f_stdin_reads_body(self):
+        """-F - reads stdin and converts to --body."""
         args = ["pr", "comment", "123", "-F", "-"]
-        assert transform_body_file(args) == args
+        fake_stdin = io.StringIO("hello from stdin")
+        result = transform_body_file(args, _stdin=fake_stdin)
+        assert result == ["pr", "comment", "123", "--body", "hello from stdin"]
 
     def test_file_not_found(self):
         with pytest.raises(ValueError, match="File not found"):
