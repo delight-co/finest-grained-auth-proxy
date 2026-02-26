@@ -109,13 +109,17 @@ def strip_repo_flag(args: list[str]) -> list[str]:
     return result
 
 
-def transform_body_file(args: list[str]) -> list[str]:
-    """Convert ``--body-file`` to ``--body`` with file contents.
+def transform_body_file(args: list[str], *, _stdin=None) -> list[str]:
+    """Convert ``--body-file`` and ``-F -`` to ``--body`` with contents.
 
-    Only handles ``--body-file`` (long form). ``-F`` is NOT ``--body-file``;
-    in upstream ``gh``, ``-F`` is short for ``--field`` (typed API parameter)
-    and must be passed through to the proxy-side ``gh`` for type inference.
+    Handles two cases:
+    - ``--body-file <path>``: reads the file and inlines as ``--body``.
+    - ``-F -``: reads stdin and inlines as ``--body``.  In upstream ``gh``,
+      ``-F`` is short for ``--field``, but ``-F -`` is documented as
+      "read body from stdin" for comment/create subcommands.  Other
+      ``-F key=value`` forms are passed through for API field injection.
     """
+    _stdin = _stdin or sys.stdin
     result = []
     skip_next = False
     for i, arg in enumerate(args):
@@ -129,6 +133,10 @@ def transform_body_file(args: list[str]) -> list[str]:
             skip_next = True
         elif arg.startswith("--body-file="):
             result.extend(["--body", _read_file(arg[len("--body-file="):])])
+        elif arg == "-F" and next_arg == "-":
+            # -F - means "read body from stdin"
+            result.extend(["--body", _stdin.read()])
+            skip_next = True
         else:
             result.append(arg)
     return result
