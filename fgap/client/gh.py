@@ -129,7 +129,10 @@ def transform_body_file(args: list[str], *, _stdin=None) -> list[str]:
         next_arg = args[i + 1] if i + 1 < len(args) else None
 
         if arg == "--body-file" and next_arg is not None:
-            result.extend(["--body", _read_file(next_arg)])
+            if next_arg == "-":
+                result.extend(["--body", _stdin.read()])
+            else:
+                result.extend(["--body", _read_file(next_arg)])
             skip_next = True
         elif arg.startswith("--body-file="):
             result.extend(["--body", _read_file(arg[len("--body-file="):])])
