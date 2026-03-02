@@ -452,17 +452,35 @@ class TestProxyCallAndOutput:
         assert code == 0
         assert "hello" in capsys.readouterr().out
 
-    async def test_stderr_printed(self, mock_proxy, capsys):
+    async def test_stderr_only_printed_to_stdout(self, mock_proxy, capsys):
+        """When stdout is empty, stderr goes to stdout so callers see it."""
         server, state = mock_proxy
         state["responses"].append(
-            web.json_response({"exit_code": 0, "stdout": "", "stderr": "info msg"}),
+            web.json_response({"exit_code": 0, "stdout": "", "stderr": "✓ Merged"}),
+        )
+        await run(
+            ["pr", "merge", "1", "-R", "o/r"],
+            _url(server),
+            _get_remote_url=_no_git(),
+        )
+        captured = capsys.readouterr()
+        assert "✓ Merged" in captured.out
+        assert captured.err == ""
+
+    async def test_stderr_with_stdout_stays_on_stderr(self, mock_proxy, capsys):
+        """When stdout has data, stderr stays on stderr."""
+        server, state = mock_proxy
+        state["responses"].append(
+            web.json_response({"exit_code": 0, "stdout": "data", "stderr": "info msg"}),
         )
         await run(
             ["issue", "list", "-R", "o/r"],
             _url(server),
             _get_remote_url=_no_git(),
         )
-        assert "info msg" in capsys.readouterr().err
+        captured = capsys.readouterr()
+        assert "data" in captured.out
+        assert "info msg" in captured.err
 
     async def test_nonzero_exit_code(self, mock_proxy, capsys):
         server, state = mock_proxy
