@@ -7,6 +7,7 @@ async def execute_cli(
     args: list[str],
     env_overrides: dict,
     timeout: int = 60,
+    stdin_data: str | None = None,
 ) -> dict:
     """Execute a CLI command as an async subprocess.
 
@@ -21,6 +22,7 @@ async def execute_cli(
     try:
         proc = await asyncio.create_subprocess_exec(
             binary, *args,
+            stdin=asyncio.subprocess.PIPE if stdin_data is not None else None,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=env,
@@ -33,7 +35,8 @@ async def execute_cli(
         }
 
     try:
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        input_bytes = stdin_data.encode("utf-8") if stdin_data is not None else None
+        stdout, stderr = await asyncio.wait_for(proc.communicate(input=input_bytes), timeout=timeout)
     except asyncio.TimeoutError:
         proc.kill()
         await proc.wait()

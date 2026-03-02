@@ -50,6 +50,7 @@ class ProxyClient:
 
     async def call_cli(
         self, tool: str, args: list[str], resource: str,
+        *, stdin_data: str | None = None,
     ) -> dict:
         """Send a CLI invocation to the proxy.
 
@@ -62,6 +63,8 @@ class ProxyClient:
         """
         url = f"{self.proxy_url}/cli"
         body = {"tool": tool, "args": args, "resource": resource}
+        if stdin_data is not None:
+            body["stdin_data"] = stdin_data
 
         session, should_close = await self._get_session()
         try:
