@@ -126,6 +126,13 @@ class TestTransformBodyFile:
         result = transform_body_file(args, _stdin=fake_stdin)
         assert result == ["pr", "comment", "123", "--body", "hello from stdin"]
 
+    def test_body_file_stdin_reads_body(self):
+        """--body-file - reads stdin and converts to --body."""
+        args = ["pr", "create", "--body-file", "-"]
+        fake_stdin = io.StringIO("stdin content")
+        result = transform_body_file(args, _stdin=fake_stdin)
+        assert result == ["pr", "create", "--body", "stdin content"]
+
     def test_file_not_found(self):
         with pytest.raises(ValueError, match="File not found"):
             transform_body_file(["--body-file", "/nonexistent/file.md"])
