@@ -47,6 +47,7 @@ def create_routes(config: dict, plugins: dict[str, Plugin]) -> web.Application:
         tool = data.get("tool", "")
         args = data.get("args", [])
         resource = data.get("resource", "")
+        stdin_data = data.get("stdin_data")
         cmd = args[0] if args else ""
 
         try:
@@ -88,7 +89,7 @@ def create_routes(config: dict, plugins: dict[str, Plugin]) -> web.Application:
             cli_args = args
             if tool == "gh" and cmd != "api":
                 cli_args = args + ["-R", resource]
-            result = await execute_cli(tool, cli_args, credential["env"], timeout=cli_timeout)
+            result = await execute_cli(tool, cli_args, credential["env"], timeout=cli_timeout, stdin_data=stdin_data)
             logger.info(
                 "cli tool=%s resource=%s cmd=%s exit_code=%d",
                 tool, resource, cmd, result["exit_code"],

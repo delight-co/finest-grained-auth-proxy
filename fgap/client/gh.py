@@ -147,6 +147,50 @@ def transform_body_file(args: list[str], *, _stdin=None) -> list[str]:
     return result
 
 
+def transform_api_input(args: list[str], *, _stdin=None) -> tuple[list[str], str | None]:
+    """Convert ``--input <path>`` to ``--input -`` with stdin data.
+
+    For ``gh api``, ``--input`` reads a file as the request body.
+    Since the file only exists on the client (sandbox), we read it
+    client-side and return the contents as stdin_data to be piped
+    to the subprocess on the server.
+
+    Returns (transformed_args, stdin_data) where stdin_data is None
+    if no --input flag was found.
+    """
+    _stdin = _stdin or sys.stdin
+    if not args or args[0] != "api":
+        return args, None
+
+    result = []
+    stdin_data = None
+    skip_next = False
+    for i, arg in enumerate(args):
+        if skip_next:
+            skip_next = False
+            continue
+        next_arg = args[i + 1] if i + 1 < len(args) else None
+
+        if arg == "--input" and next_arg is not None:
+            if next_arg == "-":
+                stdin_data = _stdin.read()
+            else:
+                stdin_data = _read_file(next_arg)
+            result.append("--input")
+            result.append("-")
+            skip_next = True
+        elif arg.startswith("--input="):
+            path = arg[len("--input="):]
+            if path == "-":
+                stdin_data = _stdin.read()
+            else:
+                stdin_data = _read_file(path)
+            result.append("--input=-")
+        else:
+            result.append(arg)
+    return result, stdin_data
+
+
 def _read_file(path: str) -> str:
     if not os.path.isfile(path):
         raise ValueError(f"File not found: {path}")
@@ -310,6 +354,7 @@ async def run(
 
     try:
         clean_args = transform_body_file(clean_args)
+        clean_args, stdin_data = transform_api_input(clean_args)
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1
@@ -329,7 +374,7 @@ async def run(
     # Call proxy
     async with ProxyClient(proxy_url) as client:
         try:
-            result = await client.call_cli("gh", clean_args, resource)
+            result = await client.call_cli("gh", clean_args, resource, stdin_data=stdin_data)
         except (ConnectionError, ValueError) as e:
             print(f"Error: {e}", file=sys.stderr)
             return 1

@@ -10,6 +10,7 @@ from fgap.client.gh import (
     parse_git_remote_url,
     run,
     strip_repo_flag,
+    transform_api_input,
     transform_body_file,
 )
 
@@ -154,6 +155,45 @@ class TestTransformBodyFile:
     def test_no_body_file(self):
         args = ["issue", "create", "--body", "inline"]
         assert transform_body_file(args) == args
+
+
+class TestTransformApiInput:
+    def test_input_file(self, tmp_path):
+        f = tmp_path / "payload.json"
+        f.write_text('{"body":"test"}')
+        args, stdin_data = transform_api_input(["api", "repos/o/r/issues", "--input", str(f)])
+        assert args == ["api", "repos/o/r/issues", "--input", "-"]
+        assert stdin_data == '{"body":"test"}'
+
+    def test_input_equals_file(self, tmp_path):
+        f = tmp_path / "payload.json"
+        f.write_text('{"body":"test"}')
+        args, stdin_data = transform_api_input(["api", "repos/o/r/issues", f"--input={f}"])
+        assert args == ["api", "repos/o/r/issues", "--input=-"]
+        assert stdin_data == '{"body":"test"}'
+
+    def test_input_stdin(self):
+        fake_stdin = io.StringIO('{"body":"hello"}')
+        args, stdin_data = transform_api_input(["api", "repos/o/r/issues", "--input", "-"], _stdin=fake_stdin)
+        assert args == ["api", "repos/o/r/issues", "--input", "-"]
+        assert stdin_data == '{"body":"hello"}'
+
+    def test_no_input_returns_none(self):
+        args, stdin_data = transform_api_input(["api", "repos/o/r/issues", "-X", "POST"])
+        assert args == ["api", "repos/o/r/issues", "-X", "POST"]
+        assert stdin_data is None
+
+    def test_non_api_skipped(self, tmp_path):
+        f = tmp_path / "payload.json"
+        f.write_text("content")
+        original = ["issue", "create", "--input", str(f)]
+        args, stdin_data = transform_api_input(original)
+        assert args == original
+        assert stdin_data is None
+
+    def test_input_file_not_found(self):
+        with pytest.raises(ValueError, match="File not found"):
+            transform_api_input(["api", "repos/o/r/issues", "--input", "/nonexistent"])
 
 
 # =========================================================================
