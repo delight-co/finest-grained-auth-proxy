@@ -110,16 +110,15 @@ def strip_repo_flag(args: list[str]) -> list[str]:
 
 
 def transform_body_file(args: list[str], *, _stdin=None) -> list[str]:
-    """Convert ``--body-file`` and ``-F -`` to ``--body`` with contents.
+    """Convert ``--body-file`` and ``-F`` to ``--body`` with contents.
 
-    Handles two cases:
-    - ``--body-file <path>``: reads the file and inlines as ``--body``.
-    - ``-F -``: reads stdin and inlines as ``--body``.  In upstream ``gh``,
-      ``-F`` is short for ``--field``, but ``-F -`` is documented as
-      "read body from stdin" for comment/create subcommands.  Other
-      ``-F key=value`` forms are passed through for API field injection.
+    ``-F`` means different things depending on the subcommand:
+    - ``gh api``: ``-F`` is ``--field`` (``key=value``).  Passed through.
+    - ``gh issue/pr create/comment/edit``: ``-F`` is ``--body-file``.
+      A path is read client-side; ``-`` reads stdin.
     """
     _stdin = _stdin or sys.stdin
+    is_api = len(args) > 0 and args[0] == "api"
     result = []
     skip_next = False
     for i, arg in enumerate(args):
@@ -136,9 +135,12 @@ def transform_body_file(args: list[str], *, _stdin=None) -> list[str]:
             skip_next = True
         elif arg.startswith("--body-file="):
             result.extend(["--body", _read_file(arg[len("--body-file="):])])
-        elif arg == "-F" and next_arg == "-":
-            # -F - means "read body from stdin"
-            result.extend(["--body", _stdin.read()])
+        elif arg == "-F" and next_arg is not None and not is_api:
+            # Non-api context: -F is --body-file
+            if next_arg == "-":
+                result.extend(["--body", _stdin.read()])
+            else:
+                result.extend(["--body", _read_file(next_arg)])
             skip_next = True
         else:
             result.append(arg)

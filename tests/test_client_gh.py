@@ -133,6 +133,20 @@ class TestTransformBodyFile:
         result = transform_body_file(args, _stdin=fake_stdin)
         assert result == ["pr", "create", "--body", "stdin content"]
 
+    def test_dash_f_file_reads_body(self, tmp_path):
+        """-F <path> in non-api context reads file and converts to --body."""
+        f = tmp_path / "body.md"
+        f.write_text("file content")
+        result = transform_body_file(["issue", "create", "-F", str(f)])
+        assert result == ["issue", "create", "--body", "file content"]
+
+    def test_dash_f_file_in_api_passed_through(self, tmp_path):
+        """-F <path> in api context is --field, not --body-file."""
+        f = tmp_path / "body.md"
+        f.write_text("content")
+        args = ["api", "repos/o/r/issues", "-F", str(f)]
+        assert transform_body_file(args) == args
+
     def test_file_not_found(self):
         with pytest.raises(ValueError, match="File not found"):
             transform_body_file(["--body-file", "/nonexistent/file.md"])
