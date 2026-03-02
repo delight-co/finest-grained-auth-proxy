@@ -385,10 +385,13 @@ async def run(
             print(result["stderr"], file=sys.stderr)
         return result["exit_code"]
 
-    if result["stderr"]:
-        print(result["stderr"], file=sys.stderr)
     if result["stdout"]:
         print(result["stdout"])
+    if result["stderr"]:
+        # gh writes status messages (e.g. "✓ Merged ...") to stderr.
+        # Print to stdout so callers that only capture stdout see them.
+        dest = sys.stdout if not result["stdout"] else sys.stderr
+        print(result["stderr"], file=dest)
 
     return 0
 
