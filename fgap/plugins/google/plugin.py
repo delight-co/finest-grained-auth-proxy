@@ -22,32 +22,56 @@ class GooglePlugin(Plugin):
         return select_credential(resource, config)
 
     async def health_check(
-        self, config: dict, *, _run_gog=None,
+        self, config: dict, *, _run_gog=None, _check_sa=None,
     ) -> list[dict]:
         """Check gog credential validity.
 
-        For each credential, runs ``gog auth list`` to verify the
+        For OAuth credentials, runs ``gog auth list`` to verify the
         keyring is accessible and accounts are configured.
+        For SA credentials, checks that the key file exists and is readable.
         """
         _run_gog = _run_gog or _default_run_gog
+        _check_sa = _check_sa or _default_check_sa
         results = []
         for cred in config.get("credentials", []):
-            keyring_pw = cred.get("keyring_password", "")
-            entry = {
-                "masked_keyring_password": mask_value(keyring_pw, visible_prefix=4),
-                "resources": cred.get("resources", []),
-            }
-            try:
-                status = await _run_gog(keyring_pw)
-                if "accounts" in status:
-                    status["accounts"] = mask_emails_in_text(
-                        status["accounts"],
-                    )
-                entry.update(status)
-            except Exception as e:
-                entry.update({"valid": False, "error": str(e)})
-            results.append(entry)
+            if "sa_key_file" in cred:
+                entry = {
+                    "type": "service_account",
+                    "account": mask_emails_in_text(cred.get("account", "")),
+                    "resources": cred.get("resources", []),
+                }
+                try:
+                    status = _check_sa(cred["sa_key_file"])
+                    entry.update(status)
+                except Exception as e:
+                    entry.update({"valid": False, "error": str(e)})
+                results.append(entry)
+            else:
+                keyring_pw = cred.get("keyring_password", "")
+                entry = {
+                    "type": "oauth",
+                    "masked_keyring_password": mask_value(keyring_pw, visible_prefix=4),
+                    "resources": cred.get("resources", []),
+                }
+                try:
+                    status = await _run_gog(keyring_pw)
+                    if "accounts" in status:
+                        status["accounts"] = mask_emails_in_text(
+                            status["accounts"],
+                        )
+                    entry.update(status)
+                except Exception as e:
+                    entry.update({"valid": False, "error": str(e)})
+                results.append(entry)
         return results
+
+
+def _default_check_sa(sa_key_file: str) -> dict:
+    if not os.path.isfile(sa_key_file):
+        return {"valid": False, "error": f"SA key file not found: {sa_key_file}"}
+    if not os.access(sa_key_file, os.R_OK):
+        return {"valid": False, "error": f"SA key file not readable: {sa_key_file}"}
+    return {"valid": True}
 
 
 async def _default_run_gog(keyring_password: str) -> dict:

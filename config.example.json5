@@ -51,6 +51,7 @@
     // Google: gog CLI (Google Workspace)
     "google": {
       "credentials": [
+        // Option 1: OAuth (keyring-based)
         {
           // Password for gog's keyring (~/.config/gogcli/)
           "keyring_password": "your-keyring-password",
@@ -59,7 +60,15 @@
           // "account": "user@gmail.com",
 
           "resources": ["*"]
-        }
+        },
+
+        // Option 2: Service account (no OAuth needed, no token expiry)
+        // The SA can only access resources explicitly shared with its email.
+        // {
+        //   "sa_key_file": "/path/to/service-account-key.json",
+        //   "account": "my-sa@my-project.iam.gserviceaccount.com",
+        //   "resources": ["*"]
+        // }
       ]
     }
   }

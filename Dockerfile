@@ -4,14 +4,14 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 ARG TARGETARCH
 ARG GH_VERSION=2.86.0
-ARG GOG_VERSION=0.11.0
+ARG GOG_VERSION=0.12.0-delight.1
 
 RUN apt-get update && apt-get install -y --no-install-recommends git curl \
     && curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${TARGETARCH}.tar.gz" \
        | tar xz -C /tmp \
     && mv /tmp/gh_${GH_VERSION}_linux_${TARGETARCH}/bin/gh /usr/local/bin/gh \
     && mkdir /tmp/gogcli \
-    && curl -fsSL "https://github.com/steipete/gogcli/releases/download/v${GOG_VERSION}/gogcli_${GOG_VERSION}_linux_${TARGETARCH}.tar.gz" \
+    && curl -fsSL "https://github.com/delight-co/gogcli/releases/download/v${GOG_VERSION}/gogcli_${GOG_VERSION}_linux_${TARGETARCH}.tar.gz" \
        | tar xz -C /tmp/gogcli \
     && mv /tmp/gogcli/gog /usr/local/bin/gog \
     && rm -rf /tmp/gh_* /tmp/gogcli /var/lib/apt/lists/*
