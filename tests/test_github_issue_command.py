@@ -135,6 +135,28 @@ async def mock_github_api():
             return web.json_response(data)
         return web.Response(status=405)
 
+    async def handle_graphql(request):
+        body = await request.json()
+        query = body.get("query", "")
+        variables = body.get("variables", {})
+        state["requests"].append({
+            "method": "POST",
+            "path": request.path,
+        })
+        if "node(id:" in query or "node(id :" in query or "$id: ID!" in query:
+            node_id = variables.get("id", "")
+            mapping = state.get("node_id_map", {})
+            db_id = mapping.get(node_id)
+            if db_id is not None:
+                return web.json_response({
+                    "data": {"node": {"databaseId": db_id}},
+                })
+            return web.json_response({
+                "data": {"node": None},
+            })
+        return web.json_response({"data": {}})
+
+    app.router.add_route("POST", "/graphql", handle_graphql)
     app.router.add_route("*", "/repos/{owner}/{repo}/issues/comments/{comment_id}", handle_comment)
     app.router.add_route("*", "/repos/{owner}/{repo}/issues/{number}", handle_issue)
 
@@ -256,6 +278,31 @@ class TestHandleCommentEdit:
         )
         assert result["exit_code"] == 1
         assert "comment ID required" in result["stderr"]
+
+    async def test_node_id_resolved_to_numeric(self, mock_github_api):
+        server, state = mock_github_api
+        state["node_id_map"] = {"IC_kwDOtest123": 999}
+        state["comments"]["999"] = {"body": "fix typo plz"}
+        api_url = str(server.make_url(""))
+
+        result = await _handle_comment_edit(
+            ["IC_kwDOtest123", "--old", "plz", "--new", "please"],
+            "owner", "repo", "tok", api_url=api_url,
+        )
+        assert result["exit_code"] == 0
+        assert state["comments"]["999"]["body"] == "fix typo please"
+
+    async def test_node_id_not_found_returns_error(self, mock_github_api):
+        server, state = mock_github_api
+        state["node_id_map"] = {}
+        api_url = str(server.make_url(""))
+
+        result = await _handle_comment_edit(
+            ["IC_kwDOunknown", "--old", "x", "--new", "y"],
+            "owner", "repo", "tok", api_url=api_url,
+        )
+        assert result["exit_code"] == 1
+        assert "Could not resolve" in result["stderr"]
 
     async def test_rest_calls_correct_endpoints(self, mock_github_api):
         server, state = mock_github_api
