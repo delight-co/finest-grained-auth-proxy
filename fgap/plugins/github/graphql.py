@@ -75,6 +75,32 @@ async def get_repository_id(
     return result["data"]["repository"]["id"]
 
 
+async def get_comment_database_id(
+    node_id: str, token: str, *, url: str | None = None,
+) -> int:
+    """Resolve a GraphQL node_id (e.g. IC_kwDO...) to its REST API numeric id."""
+    query = """
+    query($id: ID!) {
+        node(id: $id) {
+            ... on IssueComment {
+                databaseId
+            }
+            ... on DiscussionComment {
+                databaseId
+            }
+            ... on PullRequestReviewComment {
+                databaseId
+            }
+        }
+    }
+    """
+    result = await execute_graphql(query, {"id": node_id}, token, url=url)
+    node = result.get("data", {}).get("node")
+    if not node or "databaseId" not in node:
+        raise ValueError(f"Could not resolve node_id {node_id} to a database ID")
+    return node["databaseId"]
+
+
 async def get_issue_node_id(
     owner: str, repo: str, issue_number: int, token: str,
     *, url: str | None = None,

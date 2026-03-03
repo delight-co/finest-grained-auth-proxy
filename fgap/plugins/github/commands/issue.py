@@ -10,6 +10,7 @@ Everything else falls through to gh CLI (returns None).
 import aiohttp
 
 from fgap.core.http import get_session
+from fgap.plugins.github.graphql import get_comment_database_id
 
 _API_URL = "https://api.github.com"
 
@@ -172,6 +173,18 @@ async def _handle_comment_edit(
         return {"exit_code": 1, "stdout": "", "stderr": "comment ID required"}
 
     comment_id = positional[0]
+
+    # GraphQL node_ids (e.g. IC_kwDO...) are not valid in REST URL paths.
+    # Resolve to numeric databaseId first.
+    if not comment_id.isdigit():
+        try:
+            graphql_url = f"{api_url}/graphql" if api_url != _API_URL else None
+            comment_id = str(await get_comment_database_id(
+                comment_id, token, url=graphql_url,
+            ))
+        except ValueError as e:
+            return {"exit_code": 1, "stdout": "", "stderr": str(e)}
+
     url = f"{api_url}/repos/{owner}/{repo}/issues/comments/{comment_id}"
 
     try:
