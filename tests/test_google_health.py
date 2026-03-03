@@ -98,3 +98,64 @@ class TestGoogleHealthCheck:
         r = results[0]
         assert r["valid"] is False
         assert "subprocess boom" in r["error"]
+
+
+class TestGoogleSAHealthCheck:
+    async def test_sa_valid(self, tmp_path):
+        sa_key = tmp_path / "sa.json"
+        sa_key.write_text('{"type":"service_account"}')
+
+        plugin = GooglePlugin()
+        config = {"credentials": [
+            {
+                "sa_key_file": str(sa_key),
+                "account": "sa@proj.iam.gserviceaccount.com",
+                "resources": ["*"],
+            },
+        ]}
+        results = await plugin.health_check(config)
+
+        assert len(results) == 1
+        r = results[0]
+        assert r["type"] == "service_account"
+        assert r["valid"] is True
+        assert "***" in r["account"]
+        assert r["account"] != "sa@proj.iam.gserviceaccount.com"
+
+    async def test_sa_file_not_found(self):
+        plugin = GooglePlugin()
+        config = {"credentials": [
+            {
+                "sa_key_file": "/nonexistent/sa.json",
+                "account": "sa@proj.iam.gserviceaccount.com",
+                "resources": ["*"],
+            },
+        ]}
+        results = await plugin.health_check(config)
+
+        assert len(results) == 1
+        r = results[0]
+        assert r["valid"] is False
+        assert "not found" in r["error"]
+
+    async def test_mixed_oauth_and_sa(self, tmp_path):
+        sa_key = tmp_path / "sa.json"
+        sa_key.write_text('{"type":"service_account"}')
+
+        async def fake_run_gog(keyring_pw):
+            return {"valid": True, "accounts": "user@example.com"}
+
+        plugin = GooglePlugin()
+        config = {"credentials": [
+            {"keyring_password": "test-pw-12345", "resources": ["*"]},
+            {
+                "sa_key_file": str(sa_key),
+                "account": "sa@proj.iam.gserviceaccount.com",
+                "resources": ["*"],
+            },
+        ]}
+        results = await plugin.health_check(config, _run_gog=fake_run_gog)
+
+        assert len(results) == 2
+        assert results[0]["type"] == "oauth"
+        assert results[1]["type"] == "service_account"
