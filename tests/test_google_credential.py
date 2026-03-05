@@ -74,7 +74,20 @@ class TestSelectCredential:
 
 
 class TestSelectCredentialSA:
-    def test_sa_credential_returns_account(self):
+    def test_sa_credential_passes_resource_as_account(self):
+        config = {"credentials": [
+            {
+                "sa_key_file": "/path/to/sa.json",
+                "account": "sa@proj.iam.gserviceaccount.com",
+                "resources": ["*"],
+            },
+        ]}
+        result = select_credential("user@example.com", config)
+        assert result["env"]["GOG_ACCOUNT"] == "user@example.com"
+        assert result["env"]["GOG_SA_KEY_PATH"] == "/path/to/sa.json"
+        assert "GOG_KEYRING_PASSWORD" not in result["env"]
+
+    def test_sa_default_resource(self):
         config = {"credentials": [
             {
                 "sa_key_file": "/path/to/sa.json",
@@ -83,8 +96,8 @@ class TestSelectCredentialSA:
             },
         ]}
         result = select_credential("default", config)
-        assert result["env"]["GOG_ACCOUNT"] == "sa@proj.iam.gserviceaccount.com"
-        assert "GOG_KEYRING_PASSWORD" not in result["env"]
+        assert result["env"]["GOG_ACCOUNT"] == "default"
+        assert result["env"]["GOG_SA_KEY_PATH"] == "/path/to/sa.json"
 
     def test_sa_preferred_over_oauth(self):
         config = {"credentials": [
@@ -95,8 +108,9 @@ class TestSelectCredentialSA:
             },
             {"keyring_password": "pw", "resources": ["*"]},
         ]}
-        result = select_credential("default", config)
-        assert "GOG_ACCOUNT" in result["env"]
+        result = select_credential("user@example.com", config)
+        assert result["env"]["GOG_ACCOUNT"] == "user@example.com"
+        assert result["env"]["GOG_SA_KEY_PATH"] == "/path/to/sa.json"
         assert "GOG_KEYRING_PASSWORD" not in result["env"]
 
     def test_sa_no_match_falls_through_to_oauth(self):
