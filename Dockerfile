@@ -4,7 +4,7 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 ARG TARGETARCH
 ARG GH_VERSION=2.86.0
-ARG GOG_VERSION=0.11.0-delight.3
+ARG GOG_VERSION=0.11.0-delight.4
 
 RUN apt-get update && apt-get install -y --no-install-recommends git curl \
     && curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${TARGETARCH}.tar.gz" \
