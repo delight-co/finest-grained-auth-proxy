@@ -1,3 +1,5 @@
+from unittest.mock import AsyncMock, patch
+
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
@@ -33,12 +35,20 @@ class TestExecuteFallthrough:
         )
         assert result is None
 
-    async def test_review_thread_missing_action(self):
+    async def test_review_thread_no_args_shows_help(self):
         result = await execute(
             ["review-thread"], "owner/repo", {"env": {"GH_TOKEN": "t"}},
         )
-        assert result["exit_code"] == 1
-        assert "Usage" in result["stderr"]
+        assert result["exit_code"] == 0
+        assert "resolve" in result["stdout"]
+        assert "unresolve" in result["stdout"]
+
+    async def test_review_thread_help_flag(self):
+        result = await execute(
+            ["review-thread", "--help"], "owner/repo", {"env": {"GH_TOKEN": "t"}},
+        )
+        assert result["exit_code"] == 0
+        assert "resolve" in result["stdout"]
 
     async def test_review_thread_missing_comment_id(self):
         result = await execute(
@@ -46,6 +56,37 @@ class TestExecuteFallthrough:
         )
         assert result["exit_code"] == 1
         assert "Usage" in result["stderr"]
+
+
+class TestHelp:
+    @patch("fgap.plugins.github.commands.issue.execute_cli", new_callable=AsyncMock)
+    async def test_pr_edit_help(self, mock_cli):
+        mock_cli.return_value = {"exit_code": 0, "stdout": "gh pr edit help\n", "stderr": ""}
+        result = await execute(["edit", "--help"], "owner/repo", {"env": {"GH_TOKEN": "t"}})
+        assert result["exit_code"] == 0
+        assert "gh pr edit help" in result["stdout"]
+        assert "--old" in result["stdout"]
+        assert "--new" in result["stdout"]
+        mock_cli.assert_called_once_with("gh", ["pr", "edit", "--help"], {}, timeout=10)
+
+    @patch("fgap.plugins.github.commands.issue.execute_cli", new_callable=AsyncMock)
+    async def test_pr_comment_edit_help(self, mock_cli):
+        mock_cli.return_value = {"exit_code": 0, "stdout": "gh pr comment edit help\n", "stderr": ""}
+        result = await execute(
+            ["comment", "edit", "--help"], "owner/repo", {"env": {"GH_TOKEN": "t"}},
+        )
+        assert result["exit_code"] == 0
+        assert "gh pr comment edit help" in result["stdout"]
+        assert "--old" in result["stdout"]
+
+    async def test_review_thread_help(self):
+        result = await execute(
+            ["review-thread", "--help"], "owner/repo", {"env": {"GH_TOKEN": "t"}},
+        )
+        assert result["exit_code"] == 0
+        assert "resolve" in result["stdout"]
+        assert "unresolve" in result["stdout"]
+        assert "PRRC_" in result["stdout"]
 
 
 # =========================================================================

@@ -1,3 +1,5 @@
+from unittest.mock import AsyncMock, patch
+
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
@@ -88,6 +90,39 @@ class TestExecuteFallthrough:
             ["comment", "edit", "123"], "owner/repo", {"env": {"GH_TOKEN": "t"}},
         )
         assert result is None
+
+
+class TestHelp:
+    @patch("fgap.plugins.github.commands.issue.execute_cli", new_callable=AsyncMock)
+    async def test_issue_edit_help(self, mock_cli):
+        mock_cli.return_value = {"exit_code": 0, "stdout": "gh issue edit help\n", "stderr": ""}
+        result = await execute(["edit", "--help"], "owner/repo", {"env": {"GH_TOKEN": "t"}})
+        assert result["exit_code"] == 0
+        assert "gh issue edit help" in result["stdout"]
+        assert "--old" in result["stdout"]
+        assert "--new" in result["stdout"]
+        assert "--replace-all" in result["stdout"]
+        mock_cli.assert_called_once_with("gh", ["issue", "edit", "--help"], {}, timeout=10)
+
+    @patch("fgap.plugins.github.commands.issue.execute_cli", new_callable=AsyncMock)
+    async def test_issue_comment_edit_help(self, mock_cli):
+        mock_cli.return_value = {"exit_code": 0, "stdout": "gh issue comment edit help\n", "stderr": ""}
+        result = await execute(
+            ["comment", "edit", "--help"], "owner/repo", {"env": {"GH_TOKEN": "t"}},
+        )
+        assert result["exit_code"] == 0
+        assert "gh issue comment edit help" in result["stdout"]
+        assert "--old" in result["stdout"]
+
+    @patch("fgap.plugins.github.commands.issue.execute_cli", new_callable=AsyncMock)
+    async def test_help_flag_takes_priority_over_old_new(self, mock_cli):
+        mock_cli.return_value = {"exit_code": 0, "stdout": "help text\n", "stderr": ""}
+        result = await execute(
+            ["edit", "--old", "x", "--new", "y", "--help"],
+            "owner/repo", {"env": {"GH_TOKEN": "t"}},
+        )
+        assert result["exit_code"] == 0
+        assert "--old" in result["stdout"]
 
 
 # =========================================================================

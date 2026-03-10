@@ -9,10 +9,26 @@ Everything else falls through to gh CLI (returns None).
 
 import aiohttp
 
+from fgap.core.executor import execute_cli
 from fgap.core.http import get_session
 from fgap.plugins.github.graphql import get_comment_database_id
 
 _API_URL = "https://api.github.com"
+
+_EDIT_EXTRA_HELP = """
+FGAP CUSTOM FLAGS (partial body replacement)
+  --old <text>         Text to find in the body
+  --new <text>         Replacement text
+  --replace-all        Replace all occurrences (default: fail if multiple matches)
+  --title <text>       Update title (can be combined with --old/--new)
+"""
+
+_COMMENT_EDIT_EXTRA_HELP = """
+FGAP CUSTOM FLAGS (partial body replacement)
+  --old <text>         Text to find in the comment body
+  --new <text>         Replacement text
+  --replace-all        Replace all occurrences (default: fail if multiple matches)
+"""
 
 
 async def execute(args: list[str], resource: str, credential: dict) -> dict | None:
@@ -25,10 +41,15 @@ async def execute(args: list[str], resource: str, credential: dict) -> dict | No
     owner, repo = resource.split("/", 1)
     token = credential["env"]["GH_TOKEN"]
 
-    if subcmd == "edit" and _has_old_and_new(rest):
-        return await _handle_edit(rest, owner, repo, token)
+    if subcmd == "edit":
+        if _has_help_flag(rest):
+            return await _help_with_extra("gh", ["issue", "edit", "--help"], _EDIT_EXTRA_HELP)
+        if _has_old_and_new(rest):
+            return await _handle_edit(rest, owner, repo, token)
 
     if subcmd == "comment" and len(rest) > 0 and rest[0] == "edit":
+        if _has_help_flag(rest[1:]):
+            return await _help_with_extra("gh", ["issue", "comment", "edit", "--help"], _COMMENT_EDIT_EXTRA_HELP)
         if _has_old_and_new(rest[1:]):
             return await _handle_comment_edit(rest[1:], owner, repo, token)
 
@@ -37,6 +58,18 @@ async def execute(args: list[str], resource: str, credential: dict) -> dict | No
 
 def _has_old_and_new(args: list[str]) -> bool:
     return any(a == "--old" for a in args) and any(a == "--new" for a in args)
+
+
+def _has_help_flag(args: list[str]) -> bool:
+    return any(a in ("--help", "-h") for a in args)
+
+
+async def _help_with_extra(binary: str, args: list[str], extra: str) -> dict:
+    """Run a CLI help command and append extra text to the output."""
+    result = await execute_cli(binary, args, {}, timeout=10)
+    # gh outputs help to stdout
+    output = result.get("stdout", "")
+    return {"exit_code": 0, "stdout": output + extra, "stderr": ""}
 
 
 def _parse_edit_args(args: list[str]) -> tuple[list[str], str, str, bool, str | None]:

@@ -10,15 +10,30 @@ Everything else falls through to gh CLI (returns None).
 """
 
 from .issue import (
+    _COMMENT_EDIT_EXTRA_HELP,
+    _EDIT_EXTRA_HELP,
     _github_rest,
     _handle_comment_edit,
+    _has_help_flag,
     _has_old_and_new,
+    _help_with_extra,
     _parse_edit_args,
     _partial_replace,
 )
 from ..graphql import execute_graphql
 
 _API_URL = "https://api.github.com"
+
+_REVIEW_THREAD_HELP = """\
+Resolve or unresolve a PR review thread by comment ID.
+
+USAGE
+  gh pr review-thread resolve <comment-id>
+  gh pr review-thread unresolve <comment-id>
+
+The comment-id is a GraphQL node ID (e.g. PRRC_kwDO...).
+Obtain it from: gh api repos/OWNER/REPO/pulls/NUMBER/comments --jq '.[].node_id'
+"""
 
 
 async def execute(args: list[str], resource: str, credential: dict) -> dict | None:
@@ -31,15 +46,22 @@ async def execute(args: list[str], resource: str, credential: dict) -> dict | No
     owner, repo = resource.split("/", 1)
     token = credential["env"]["GH_TOKEN"]
 
-    if subcmd == "edit" and _has_old_and_new(rest):
-        return await _handle_edit(rest, owner, repo, token)
+    if subcmd == "edit":
+        if _has_help_flag(rest):
+            return await _help_with_extra("gh", ["pr", "edit", "--help"], _EDIT_EXTRA_HELP)
+        if _has_old_and_new(rest):
+            return await _handle_edit(rest, owner, repo, token)
 
     if subcmd == "comment" and len(rest) > 0 and rest[0] == "edit":
+        if _has_help_flag(rest[1:]):
+            return await _help_with_extra("gh", ["pr", "comment", "edit", "--help"], _COMMENT_EDIT_EXTRA_HELP)
         if _has_old_and_new(rest[1:]):
             return await _handle_comment_edit(rest[1:], owner, repo, token)
 
     if subcmd == "review-thread":
-        if rest and rest[0] in ("resolve", "unresolve") and len(rest) > 1:
+        if not rest or _has_help_flag(rest):
+            return {"exit_code": 0, "stdout": _REVIEW_THREAD_HELP, "stderr": ""}
+        if rest[0] in ("resolve", "unresolve") and len(rest) > 1:
             return await _handle_review_thread(rest[0], rest[1], token)
         return {"exit_code": 1, "stdout": "", "stderr": "Usage: pr review-thread resolve|unresolve <comment-id>"}
 
