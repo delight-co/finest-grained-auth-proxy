@@ -104,15 +104,24 @@ class TestHelp:
         assert "--replace-all" in result["stdout"]
         mock_cli.assert_called_once_with("gh", ["issue", "edit", "--help"], {}, timeout=10)
 
-    @patch("fgap.plugins.github.commands.issue.execute_cli", new_callable=AsyncMock)
-    async def test_issue_comment_edit_help(self, mock_cli):
-        mock_cli.return_value = {"exit_code": 0, "stdout": "gh issue comment edit help\n", "stderr": ""}
+    async def test_issue_comment_edit_help(self):
         result = await execute(
             ["comment", "edit", "--help"], "owner/repo", {"env": {"GH_TOKEN": "t"}},
         )
         assert result["exit_code"] == 0
-        assert "gh issue comment edit help" in result["stdout"]
         assert "--old" in result["stdout"]
+        assert "--new" in result["stdout"]
+        assert "comment-id" in result["stdout"]
+
+    @patch("fgap.plugins.github.commands.issue.execute_cli", new_callable=AsyncMock)
+    async def test_issue_comment_help_shows_edit(self, mock_cli):
+        mock_cli.return_value = {"exit_code": 0, "stdout": "gh issue comment help\n", "stderr": ""}
+        result = await execute(
+            ["comment", "--help"], "owner/repo", {"env": {"GH_TOKEN": "t"}},
+        )
+        assert result["exit_code"] == 0
+        assert "gh issue comment help" in result["stdout"]
+        assert "edit" in result["stdout"]
 
     @patch("fgap.plugins.github.commands.issue.execute_cli", new_callable=AsyncMock)
     async def test_help_flag_takes_priority_over_old_new(self, mock_cli):

@@ -60,6 +60,14 @@ class TestExecuteFallthrough:
 
 class TestHelp:
     @patch("fgap.plugins.github.commands.issue.execute_cli", new_callable=AsyncMock)
+    async def test_pr_help_shows_review_thread(self, mock_cli):
+        mock_cli.return_value = {"exit_code": 0, "stdout": "gh pr help\n", "stderr": ""}
+        result = await execute(["--help"], "owner/repo", {"env": {"GH_TOKEN": "t"}})
+        assert result["exit_code"] == 0
+        assert "gh pr help" in result["stdout"]
+        assert "review-thread" in result["stdout"]
+
+    @patch("fgap.plugins.github.commands.issue.execute_cli", new_callable=AsyncMock)
     async def test_pr_edit_help(self, mock_cli):
         mock_cli.return_value = {"exit_code": 0, "stdout": "gh pr edit help\n", "stderr": ""}
         result = await execute(["edit", "--help"], "owner/repo", {"env": {"GH_TOKEN": "t"}})
@@ -70,14 +78,22 @@ class TestHelp:
         mock_cli.assert_called_once_with("gh", ["pr", "edit", "--help"], {}, timeout=10)
 
     @patch("fgap.plugins.github.commands.issue.execute_cli", new_callable=AsyncMock)
-    async def test_pr_comment_edit_help(self, mock_cli):
-        mock_cli.return_value = {"exit_code": 0, "stdout": "gh pr comment edit help\n", "stderr": ""}
+    async def test_pr_comment_help_shows_edit(self, mock_cli):
+        mock_cli.return_value = {"exit_code": 0, "stdout": "gh pr comment help\n", "stderr": ""}
+        result = await execute(
+            ["comment", "--help"], "owner/repo", {"env": {"GH_TOKEN": "t"}},
+        )
+        assert result["exit_code"] == 0
+        assert "gh pr comment help" in result["stdout"]
+        assert "edit" in result["stdout"]
+
+    async def test_pr_comment_edit_help(self):
         result = await execute(
             ["comment", "edit", "--help"], "owner/repo", {"env": {"GH_TOKEN": "t"}},
         )
         assert result["exit_code"] == 0
-        assert "gh pr comment edit help" in result["stdout"]
         assert "--old" in result["stdout"]
+        assert "comment-id" in result["stdout"]
 
     async def test_review_thread_help(self):
         result = await execute(

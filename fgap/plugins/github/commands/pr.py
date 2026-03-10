@@ -10,7 +10,8 @@ Everything else falls through to gh CLI (returns None).
 """
 
 from .issue import (
-    _COMMENT_EDIT_EXTRA_HELP,
+    _COMMENT_EDIT_HELP,
+    _COMMENT_EXTRA_HELP,
     _EDIT_EXTRA_HELP,
     _github_rest,
     _handle_comment_edit,
@@ -35,6 +36,11 @@ The comment-id is a GraphQL node ID (e.g. PRRC_kwDO...).
 Obtain it from: gh api repos/OWNER/REPO/pulls/NUMBER/comments --jq '.[].node_id'
 """
 
+_PR_EXTRA_HELP = """
+FGAP CUSTOM COMMANDS
+  review-thread resolve|unresolve <comment-id>   Resolve/unresolve a review thread
+"""
+
 
 async def execute(args: list[str], resource: str, credential: dict) -> dict | None:
     """Execute pr command. Returns None to fall through to gh CLI."""
@@ -46,17 +52,23 @@ async def execute(args: list[str], resource: str, credential: dict) -> dict | No
     owner, repo = resource.split("/", 1)
     token = credential["env"]["GH_TOKEN"]
 
+    if _has_help_flag([subcmd]):
+        return await _help_with_extra("gh", ["pr", "--help"], _PR_EXTRA_HELP)
+
     if subcmd == "edit":
         if _has_help_flag(rest):
             return await _help_with_extra("gh", ["pr", "edit", "--help"], _EDIT_EXTRA_HELP)
         if _has_old_and_new(rest):
             return await _handle_edit(rest, owner, repo, token)
 
-    if subcmd == "comment" and len(rest) > 0 and rest[0] == "edit":
-        if _has_help_flag(rest[1:]):
-            return await _help_with_extra("gh", ["pr", "comment", "edit", "--help"], _COMMENT_EDIT_EXTRA_HELP)
-        if _has_old_and_new(rest[1:]):
-            return await _handle_comment_edit(rest[1:], owner, repo, token)
+    if subcmd == "comment":
+        if _has_help_flag(rest):
+            return await _help_with_extra("gh", ["pr", "comment", "--help"], _COMMENT_EXTRA_HELP)
+        if len(rest) > 0 and rest[0] == "edit":
+            if _has_help_flag(rest[1:]):
+                return {"exit_code": 0, "stdout": _COMMENT_EDIT_HELP, "stderr": ""}
+            if _has_old_and_new(rest[1:]):
+                return await _handle_comment_edit(rest[1:], owner, repo, token)
 
     if subcmd == "review-thread":
         if not rest or _has_help_flag(rest):
