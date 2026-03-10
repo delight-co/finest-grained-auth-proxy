@@ -41,3 +41,20 @@ class TestExecuteCli:
         result = await execute_cli("nonexistent_binary_xyz", [], {})
         assert result["exit_code"] == -1
         assert "not found" in result["stderr"].lower()
+
+    async def test_gh_force_tty_injected(self):
+        """GH_FORCE_TTY should be set in subprocess environment."""
+        result = await execute_cli("printenv", ["GH_FORCE_TTY"], {})
+        assert result["exit_code"] == 0
+        assert result["stdout"].strip() == "1"
+
+    async def test_no_color_injected(self):
+        """NO_COLOR should be set in subprocess environment."""
+        result = await execute_cli("printenv", ["NO_COLOR"], {})
+        assert result["exit_code"] == 0
+        assert result["stdout"].strip() == "1"
+
+    async def test_stdin_data(self):
+        result = await execute_cli("cat", [], {}, stdin_data="hello stdin")
+        assert result["exit_code"] == 0
+        assert "hello stdin" in result["stdout"]

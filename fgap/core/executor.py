@@ -11,13 +11,22 @@ async def execute_cli(
 ) -> dict:
     """Execute a CLI command as an async subprocess.
 
+    Sets ``GH_FORCE_TTY`` so that ``gh`` emits status messages (e.g.
+    "✓ Merged ...") that it normally suppresses under pipes, and
+    ``NO_COLOR`` to prevent ANSI color codes in the output.
+
     The credential is injected via env_overrides and never touches the caller's
     environment.
 
     Returns:
         {"exit_code": int, "stdout": str, "stderr": str}
     """
-    env = {**os.environ, **env_overrides}
+    env = {
+        **os.environ,
+        "GH_FORCE_TTY": "1",
+        "NO_COLOR": "1",
+        **env_overrides,
+    }
 
     try:
         proc = await asyncio.create_subprocess_exec(
