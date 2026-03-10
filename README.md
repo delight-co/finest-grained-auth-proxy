@@ -49,6 +49,18 @@ uv run python main.py --config config.json5
 
 Default port: `8766`
 
+#### Background mode
+
+```bash
+uv run python main.py --config config.json5 \
+  --daemon --pidfile /tmp/fgap.pid --logfile /tmp/fgap.log
+
+# Stop
+kill $(cat /tmp/fgap.pid)
+```
+
+`--logfile` is required with `--daemon`. `--pidfile` and `--logfile` also work in foreground mode.
+
 ### 3. Install Wrappers (Sandbox Side)
 
 ```bash
