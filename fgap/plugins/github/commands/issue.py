@@ -20,7 +20,7 @@ FGAP CUSTOM FLAGS (partial body replacement)
   --old <text>         Text to find in the body
   --new <text>         Replacement text
   --replace-all        Replace all occurrences (default: fail if multiple matches)
-"""
+"""[1:]  # strip leading newline
 
 _COMMENT_EDIT_HELP = """\
 Edit an issue or PR comment by ID with partial body replacement.
@@ -40,7 +40,7 @@ The comment-id can be a numeric ID or a GraphQL node ID (e.g. IC_kwDO...).
 _COMMENT_EXTRA_HELP = """
 FGAP CUSTOM COMMANDS
   edit <comment-id> --old <text> --new <text>   Partial body replacement for a comment
-"""
+"""[1:]  # strip leading newline
 
 
 async def execute(args: list[str], resource: str, credential: dict) -> dict | None:
@@ -60,13 +60,13 @@ async def execute(args: list[str], resource: str, credential: dict) -> dict | No
             return await _handle_edit(rest, owner, repo, token)
 
     if subcmd == "comment":
-        if _has_help_flag(rest):
-            return await _help_with_extra("gh", ["issue", "comment", "--help"], _COMMENT_EXTRA_HELP)
         if len(rest) > 0 and rest[0] == "edit":
             if _has_help_flag(rest[1:]):
                 return {"exit_code": 0, "stdout": _COMMENT_EDIT_HELP, "stderr": ""}
             if _has_old_and_new(rest[1:]):
                 return await _handle_comment_edit(rest[1:], owner, repo, token)
+        if _has_help_flag(rest):
+            return await _help_with_extra("gh", ["issue", "comment", "--help"], _COMMENT_EXTRA_HELP)
 
     return None
 

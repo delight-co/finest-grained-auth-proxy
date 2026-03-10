@@ -39,7 +39,7 @@ Obtain it from: gh api repos/OWNER/REPO/pulls/NUMBER/comments --jq '.[].node_id'
 _PR_EXTRA_HELP = """
 FGAP CUSTOM COMMANDS
   review-thread resolve|unresolve <comment-id>   Resolve/unresolve a review thread
-"""
+"""[1:]  # strip leading newline
 
 
 async def execute(args: list[str], resource: str, credential: dict) -> dict | None:
@@ -62,13 +62,13 @@ async def execute(args: list[str], resource: str, credential: dict) -> dict | No
             return await _handle_edit(rest, owner, repo, token)
 
     if subcmd == "comment":
-        if _has_help_flag(rest):
-            return await _help_with_extra("gh", ["pr", "comment", "--help"], _COMMENT_EXTRA_HELP)
         if len(rest) > 0 and rest[0] == "edit":
             if _has_help_flag(rest[1:]):
                 return {"exit_code": 0, "stdout": _COMMENT_EDIT_HELP, "stderr": ""}
             if _has_old_and_new(rest[1:]):
                 return await _handle_comment_edit(rest[1:], owner, repo, token)
+        if _has_help_flag(rest):
+            return await _help_with_extra("gh", ["pr", "comment", "--help"], _COMMENT_EXTRA_HELP)
 
     if subcmd == "review-thread":
         if not rest or _has_help_flag(rest):
