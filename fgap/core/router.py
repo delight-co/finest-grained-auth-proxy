@@ -54,8 +54,12 @@ def create_routes(config: dict, plugins: dict[str, Plugin]) -> web.Application:
             if not tool:
                 raise web.HTTPBadRequest(text="Missing 'tool' field")
 
+            is_help = any(a in ("--help", "-h") for a in args)
+
             if not resource:
-                raise web.HTTPBadRequest(text="Missing 'resource' field")
+                if not is_help:
+                    raise web.HTTPBadRequest(text="Missing 'resource' field")
+                resource = "_/help"
 
             # Find plugin
             plugin = find_plugin_for_tool(tool, plugins)
@@ -70,7 +74,9 @@ def create_routes(config: dict, plugins: dict[str, Plugin]) -> web.Application:
             plugin_config = config.get("plugins", {}).get(plugin.name, {})
             credential = plugin.select_credential(resource, plugin_config)
             if not credential:
-                raise web.HTTPForbidden(text=f"No credential for {tool} on {resource}")
+                if not is_help:
+                    raise web.HTTPForbidden(text=f"No credential for {tool} on {resource}")
+                credential = {"env": {}}
 
             # Try custom commands (with fallthrough)
             commands = plugin.get_commands()

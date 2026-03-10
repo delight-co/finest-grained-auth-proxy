@@ -133,6 +133,25 @@ class TestHelp:
         assert result["exit_code"] == 0
         assert "--old" in result["stdout"]
 
+    @patch("fgap.plugins.github.commands.issue.execute_cli", new_callable=AsyncMock)
+    async def test_issue_edit_help_without_credential(self, mock_cli):
+        mock_cli.return_value = {"exit_code": 0, "stdout": "edit help\n", "stderr": ""}
+        result = await execute(["edit", "--help"], "_/help", {"env": {}})
+        assert result["exit_code"] == 0
+        assert "--old" in result["stdout"]
+
+    async def test_issue_comment_edit_help_without_credential(self):
+        result = await execute(["comment", "edit", "--help"], "_/help", {"env": {}})
+        assert result["exit_code"] == 0
+        assert "--old" in result["stdout"]
+
+    @patch("fgap.plugins.github.commands.issue.execute_cli", new_callable=AsyncMock)
+    async def test_issue_comment_help_without_credential(self, mock_cli):
+        mock_cli.return_value = {"exit_code": 0, "stdout": "comment help\n", "stderr": ""}
+        result = await execute(["comment", "--help"], "_/help", {"env": {}})
+        assert result["exit_code"] == 0
+        assert "edit" in result["stdout"]
+
 
 # =========================================================================
 # Handler tests with mock GitHub API
