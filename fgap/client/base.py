@@ -101,6 +101,42 @@ class ProxyClient:
             if should_close:
                 await session.close()
 
+    async def download_asset(
+        self, tool: str, resource: str, url: str, dest: str,
+    ) -> None:
+        """Download a file via the proxy's ``/download`` endpoint.
+
+        The proxy authenticates with the upstream and streams the bytes
+        back.  This method writes them to *dest*.
+
+        Raises:
+            ConnectionError: Cannot reach the proxy.
+            ValueError: Proxy returned an error (4xx/5xx).
+        """
+        endpoint = f"{self.proxy_url}/download"
+        body = {"tool": tool, "resource": resource, "url": url}
+
+        # Use a dedicated session with a longer timeout for large files
+        download_timeout = aiohttp.ClientTimeout(total=300)
+        session = aiohttp.ClientSession(timeout=download_timeout)
+        try:
+            async with session.post(endpoint, json=body) as resp:
+                if resp.status != 200:
+                    text = await resp.text()
+                    raise ValueError(
+                        f"Download failed (status {resp.status}): {text}",
+                    )
+
+                with open(dest, "wb") as f:
+                    async for chunk in resp.content.iter_any():
+                        f.write(chunk)
+        except aiohttp.ClientConnectionError as e:
+            raise ConnectionError(
+                f"Cannot connect to proxy at {self.proxy_url}: {e}",
+            ) from e
+        finally:
+            await session.close()
+
     async def get_auth_status(self) -> dict:
         """Get credential status from the proxy.
 

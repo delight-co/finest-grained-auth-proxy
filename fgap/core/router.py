@@ -113,7 +113,91 @@ def create_routes(config: dict, plugins: dict[str, Plugin]) -> web.Application:
             statuses[name] = await plugin.health_check(plugin_config)
         return web.json_response({"plugins": statuses})
 
+    async def handle_download(request: web.Request) -> web.StreamResponse:
+        """Proxy-authenticated file download.
+
+        The client sends ``{tool, resource, url}``; the server selects a
+        credential for *resource*, fetches *url* with that credential, and
+        streams the bytes back.  Used by ``gh release download`` and
+        similar commands that write files to local disk.
+        """
+        data = await request.json()
+
+        tool = data.get("tool", "")
+        resource = data.get("resource", "")
+        url = data.get("url", "")
+
+        try:
+            if not tool or not resource or not url:
+                raise web.HTTPBadRequest(
+                    text="Missing required fields: tool, resource, url",
+                )
+
+            plugin = find_plugin_for_tool(tool, plugins)
+            if not plugin:
+                raise web.HTTPBadRequest(
+                    text=f"No plugin handles tool: {tool}",
+                )
+
+            plugin_config = config.get("plugins", {}).get(plugin.name, {})
+            credential = plugin.select_credential(resource, plugin_config)
+            if not credential:
+                raise web.HTTPForbidden(
+                    text=f"No credential for {tool} on {resource}",
+                )
+
+            token = credential["env"]["GH_TOKEN"]
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/octet-stream",
+                "User-Agent": "fgap",
+            }
+
+            session = aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=300),
+            )
+            try:
+                async with session.get(url, headers=headers) as resp:
+                    if resp.status != 200:
+                        text = await resp.text()
+                        raise web.HTTPBadGateway(
+                            text=f"Upstream error: {resp.status} {text}",
+                        )
+
+                    response = web.StreamResponse(
+                        status=200,
+                        headers={
+                            "Content-Type": resp.headers.get(
+                                "Content-Type", "application/octet-stream",
+                            ),
+                        },
+                    )
+                    cl = resp.headers.get("Content-Length")
+                    if cl:
+                        response.headers["Content-Length"] = cl
+
+                    await response.prepare(request)
+                    async for chunk in resp.content.iter_any():
+                        await response.write(chunk)
+                    await response.write_eof()
+
+                    logger.info(
+                        "download tool=%s resource=%s url=%s",
+                        tool, resource, url[:80],
+                    )
+                    return response
+            finally:
+                await session.close()
+
+        except web.HTTPException as exc:
+            logger.warning(
+                "download tool=%s resource=%s rejected=%d %s",
+                tool, resource, exc.status_code, exc.reason,
+            )
+            raise
+
     app.router.add_post("/cli", handle_cli)
+    app.router.add_post("/download", handle_download)
     app.router.add_get("/health", handle_health)
     app.router.add_get("/auth/status", handle_auth_status)
 
