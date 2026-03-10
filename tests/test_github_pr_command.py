@@ -10,6 +10,7 @@ from fgap.plugins.github.commands.pr import (
     _get_thread_id_for_comment,
     _handle_edit,
     _handle_review_thread,
+    _thread_has_comment,
     execute,
 )
 
@@ -305,30 +306,16 @@ class TestHandleCommentEdit:
 # =========================================================================
 
 
-@pytest.fixture
-async def mock_graphql_api():
-    """Mock GitHub GraphQL API for review thread operations."""
-    app = web.Application()
-    state = {
-        "threads": {
-            "PRRT_thread1": {
-                "id": "PRRT_thread1",
-                "isResolved": False,
-                "comments": [
-                    {"id": "PRRC_comment1"},
-                    {"id": "PRRC_comment2"},
-                ],
-            },
-            "PRRT_thread2": {
-                "id": "PRRT_thread2",
-                "isResolved": True,
-                "comments": [
-                    {"id": "PRRC_comment3"},
-                ],
-            },
-        },
-        "requests": [],
-    }
+def _make_graphql_handler(state):
+    """Create a GraphQL handler that supports pagination."""
+
+    def _paginate(items, cursor, page_size):
+        start = int(cursor) if cursor else 0
+        end = start + page_size if page_size else len(items)
+        page = items[start:end]
+        has_next = end < len(items)
+        end_cursor = str(end) if has_next else None
+        return page, has_next, end_cursor
 
     async def handle_graphql(request):
         data = await request.json()
@@ -336,30 +323,80 @@ async def mock_graphql_api():
         variables = data.get("variables", {})
         state["requests"].append({"query": query, "variables": variables})
 
-        if "node(id:" in query or "node(id :" in query:
+        # Comment → thread lookup (PullRequestReviewComment query)
+        if "PullRequestReviewComment" in query:
             node_id = variables.get("id", "")
-            # Find which thread contains this comment
-            pr_data = None
-            for thread in state["threads"].values():
-                for comment in thread["comments"]:
-                    if comment["id"] == node_id:
-                        pr_data = {
-                            "reviewThreads": {
-                                "nodes": [
-                                    {
-                                        "id": t["id"],
-                                        "comments": {"nodes": t["comments"]},
-                                    }
-                                    for t in state["threads"].values()
-                                ],
-                            },
-                        }
-                        break
-            if pr_data:
-                return web.json_response({
-                    "data": {"node": {"pullRequest": pr_data}},
+            all_threads = list(state["threads"].values())
+            # Check if the comment exists
+            found = any(
+                c["id"] == node_id
+                for t in all_threads
+                for c in t["comments"]
+            )
+            if not found:
+                return web.json_response({"data": {"node": None}})
+
+            threads_cursor = variables.get("threadsCursor")
+            page_size = state.get("threads_page_size")
+            page, has_next, end_cursor = _paginate(
+                all_threads, threads_cursor, page_size,
+            )
+
+            comments_page_size = state.get("comments_page_size")
+            nodes = []
+            for t in page:
+                c_page, c_has_next, _ = _paginate(
+                    t["comments"], None, comments_page_size,
+                )
+                nodes.append({
+                    "id": t["id"],
+                    "comments": {
+                        "pageInfo": {"hasNextPage": c_has_next},
+                        "nodes": c_page,
+                    },
                 })
-            return web.json_response({"data": {"node": None}})
+
+            return web.json_response({
+                "data": {
+                    "node": {
+                        "pullRequest": {
+                            "reviewThreads": {
+                                "pageInfo": {
+                                    "hasNextPage": has_next,
+                                    "endCursor": end_cursor,
+                                },
+                                "nodes": nodes,
+                            },
+                        },
+                    },
+                },
+            })
+
+        # Thread comment pagination (PullRequestReviewThread query)
+        if "PullRequestReviewThread" in query:
+            thread_id = variables.get("threadId", "")
+            thread = state["threads"].get(thread_id)
+            if not thread:
+                return web.json_response({"data": {"node": None}})
+
+            cursor = variables.get("cursor")
+            page_size = state.get("comments_page_size")
+            page, has_next, end_cursor = _paginate(
+                thread["comments"], cursor, page_size,
+            )
+            return web.json_response({
+                "data": {
+                    "node": {
+                        "comments": {
+                            "pageInfo": {
+                                "hasNextPage": has_next,
+                                "endCursor": end_cursor,
+                            },
+                            "nodes": page,
+                        },
+                    },
+                },
+            })
 
         if "unresolveReviewThread" in query:
             thread_id = variables.get("threadId", "")
@@ -387,7 +424,35 @@ async def mock_graphql_api():
 
         return web.json_response({"errors": [{"message": "unexpected query"}]})
 
-    app.router.add_post("/graphql", handle_graphql)
+    return handle_graphql
+
+
+@pytest.fixture
+async def mock_graphql_api():
+    """Mock GitHub GraphQL API for review thread operations."""
+    app = web.Application()
+    state = {
+        "threads": {
+            "PRRT_thread1": {
+                "id": "PRRT_thread1",
+                "isResolved": False,
+                "comments": [
+                    {"id": "PRRC_comment1"},
+                    {"id": "PRRC_comment2"},
+                ],
+            },
+            "PRRT_thread2": {
+                "id": "PRRT_thread2",
+                "isResolved": True,
+                "comments": [
+                    {"id": "PRRC_comment3"},
+                ],
+            },
+        },
+        "requests": [],
+    }
+
+    app.router.add_post("/graphql", _make_graphql_handler(state))
 
     async with TestServer(app) as server:
         yield server, state
@@ -442,6 +507,106 @@ class TestHandleReviewThread:
         result = await _handle_review_thread("resolve", "PRRC_unknown", "tok", url=url)
         assert result["exit_code"] == 1
         assert "not found" in result["stderr"]
+
+
+# =========================================================================
+# Pagination tests
+# =========================================================================
+
+
+@pytest.fixture
+async def mock_graphql_api_paginated():
+    """Mock GraphQL API with pagination (1 thread per page, 1 comment per page)."""
+    app = web.Application()
+    state = {
+        "threads": {
+            "PRRT_t1": {
+                "id": "PRRT_t1",
+                "isResolved": False,
+                "comments": [{"id": "PRRC_c1"}],
+            },
+            "PRRT_t2": {
+                "id": "PRRT_t2",
+                "isResolved": False,
+                "comments": [{"id": "PRRC_c2"}, {"id": "PRRC_c3"}],
+            },
+            "PRRT_t3": {
+                "id": "PRRT_t3",
+                "isResolved": False,
+                "comments": [{"id": "PRRC_c4"}],
+            },
+        },
+        "threads_page_size": 1,
+        "comments_page_size": 1,
+        "requests": [],
+    }
+
+    app.router.add_post("/graphql", _make_graphql_handler(state))
+
+    async with TestServer(app) as server:
+        yield server, state
+
+
+class TestThreadPagination:
+    async def test_finds_comment_on_second_thread_page(
+        self, mock_graphql_api_paginated,
+    ):
+        """Thread is on the 2nd page (threads_page_size=1)."""
+        server, _ = mock_graphql_api_paginated
+        url = str(server.make_url("/graphql"))
+
+        thread_id = await _get_thread_id_for_comment("PRRC_c2", "tok", url=url)
+        assert thread_id == "PRRT_t2"
+
+    async def test_finds_comment_on_last_thread_page(
+        self, mock_graphql_api_paginated,
+    ):
+        """Thread is on the 3rd (last) page."""
+        server, _ = mock_graphql_api_paginated
+        url = str(server.make_url("/graphql"))
+
+        thread_id = await _get_thread_id_for_comment("PRRC_c4", "tok", url=url)
+        assert thread_id == "PRRT_t3"
+
+    async def test_finds_comment_via_comment_pagination(
+        self, mock_graphql_api_paginated,
+    ):
+        """Comment is on the 2nd page of its thread (comments_page_size=1)."""
+        server, _ = mock_graphql_api_paginated
+        url = str(server.make_url("/graphql"))
+
+        thread_id = await _get_thread_id_for_comment("PRRC_c3", "tok", url=url)
+        assert thread_id == "PRRT_t2"
+
+    async def test_unknown_comment_with_pagination(
+        self, mock_graphql_api_paginated,
+    ):
+        server, _ = mock_graphql_api_paginated
+        url = str(server.make_url("/graphql"))
+
+        with pytest.raises(ValueError, match="not found"):
+            await _get_thread_id_for_comment("PRRC_unknown", "tok", url=url)
+
+
+class TestThreadHasComment:
+    async def test_finds_comment_on_second_page(
+        self, mock_graphql_api_paginated,
+    ):
+        """_thread_has_comment paginates through comments."""
+        server, _ = mock_graphql_api_paginated
+        url = str(server.make_url("/graphql"))
+
+        found = await _thread_has_comment("PRRT_t2", "PRRC_c3", "tok", url=url)
+        assert found is True
+
+    async def test_comment_not_in_thread(
+        self, mock_graphql_api_paginated,
+    ):
+        server, _ = mock_graphql_api_paginated
+        url = str(server.make_url("/graphql"))
+
+        found = await _thread_has_comment("PRRT_t1", "PRRC_c3", "tok", url=url)
+        assert found is False
 
 
 # =========================================================================
