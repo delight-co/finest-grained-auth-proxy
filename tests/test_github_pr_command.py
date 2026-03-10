@@ -5,7 +5,9 @@ from aiohttp.test_utils import TestClient, TestServer
 from fgap.core.router import create_routes
 from fgap.plugins.github import GitHubPlugin
 from fgap.plugins.github.commands.pr import (
+    _get_thread_id_for_comment,
     _handle_edit,
+    _handle_review_thread,
     execute,
 )
 
@@ -30,6 +32,20 @@ class TestExecuteFallthrough:
             ["comment", "edit", "123"], "owner/repo", {"env": {"GH_TOKEN": "t"}},
         )
         assert result is None
+
+    async def test_review_thread_missing_action(self):
+        result = await execute(
+            ["review-thread"], "owner/repo", {"env": {"GH_TOKEN": "t"}},
+        )
+        assert result["exit_code"] == 1
+        assert "Usage" in result["stderr"]
+
+    async def test_review_thread_missing_comment_id(self):
+        result = await execute(
+            ["review-thread", "resolve"], "owner/repo", {"env": {"GH_TOKEN": "t"}},
+        )
+        assert result["exit_code"] == 1
+        assert "Usage" in result["stderr"]
 
 
 # =========================================================================
@@ -225,6 +241,150 @@ class TestHandleCommentEdit:
             assert state["comments"]["456"]["body"] == "new text"
         finally:
             issue_mod._API_URL = original_url
+
+
+# =========================================================================
+# Review thread tests
+# =========================================================================
+
+
+@pytest.fixture
+async def mock_graphql_api():
+    """Mock GitHub GraphQL API for review thread operations."""
+    app = web.Application()
+    state = {
+        "threads": {
+            "PRRT_thread1": {
+                "id": "PRRT_thread1",
+                "isResolved": False,
+                "comments": [
+                    {"id": "PRRC_comment1"},
+                    {"id": "PRRC_comment2"},
+                ],
+            },
+            "PRRT_thread2": {
+                "id": "PRRT_thread2",
+                "isResolved": True,
+                "comments": [
+                    {"id": "PRRC_comment3"},
+                ],
+            },
+        },
+        "requests": [],
+    }
+
+    async def handle_graphql(request):
+        data = await request.json()
+        query = data.get("query", "")
+        variables = data.get("variables", {})
+        state["requests"].append({"query": query, "variables": variables})
+
+        if "node(id:" in query or "node(id :" in query:
+            node_id = variables.get("id", "")
+            # Find which thread contains this comment
+            pr_data = None
+            for thread in state["threads"].values():
+                for comment in thread["comments"]:
+                    if comment["id"] == node_id:
+                        pr_data = {
+                            "reviewThreads": {
+                                "nodes": [
+                                    {
+                                        "id": t["id"],
+                                        "comments": {"nodes": t["comments"]},
+                                    }
+                                    for t in state["threads"].values()
+                                ],
+                            },
+                        }
+                        break
+            if pr_data:
+                return web.json_response({
+                    "data": {"node": {"pullRequest": pr_data}},
+                })
+            return web.json_response({"data": {"node": None}})
+
+        if "unresolveReviewThread" in query:
+            thread_id = variables.get("threadId", "")
+            if thread_id in state["threads"]:
+                state["threads"][thread_id]["isResolved"] = False
+                return web.json_response({
+                    "data": {
+                        "unresolveReviewThread": {
+                            "thread": {"isResolved": False},
+                        },
+                    },
+                })
+
+        if "resolveReviewThread" in query:
+            thread_id = variables.get("threadId", "")
+            if thread_id in state["threads"]:
+                state["threads"][thread_id]["isResolved"] = True
+                return web.json_response({
+                    "data": {
+                        "resolveReviewThread": {
+                            "thread": {"isResolved": True},
+                        },
+                    },
+                })
+
+        return web.json_response({"errors": [{"message": "unexpected query"}]})
+
+    app.router.add_post("/graphql", handle_graphql)
+
+    async with TestServer(app) as server:
+        yield server, state
+
+
+class TestGetThreadIdForComment:
+    async def test_finds_thread_for_comment(self, mock_graphql_api):
+        server, _ = mock_graphql_api
+        url = str(server.make_url("/graphql"))
+
+        thread_id = await _get_thread_id_for_comment("PRRC_comment1", "tok", url=url)
+        assert thread_id == "PRRT_thread1"
+
+    async def test_finds_thread_for_second_comment(self, mock_graphql_api):
+        server, _ = mock_graphql_api
+        url = str(server.make_url("/graphql"))
+
+        thread_id = await _get_thread_id_for_comment("PRRC_comment3", "tok", url=url)
+        assert thread_id == "PRRT_thread2"
+
+    async def test_unknown_comment_raises(self, mock_graphql_api):
+        server, _ = mock_graphql_api
+        url = str(server.make_url("/graphql"))
+
+        with pytest.raises(ValueError, match="not found"):
+            await _get_thread_id_for_comment("PRRC_unknown", "tok", url=url)
+
+
+class TestHandleReviewThread:
+    async def test_resolve(self, mock_graphql_api):
+        server, state = mock_graphql_api
+        url = str(server.make_url("/graphql"))
+
+        result = await _handle_review_thread("resolve", "PRRC_comment1", "tok", url=url)
+        assert result["exit_code"] == 0
+        assert "Resolved" in result["stderr"]
+        assert state["threads"]["PRRT_thread1"]["isResolved"] is True
+
+    async def test_unresolve(self, mock_graphql_api):
+        server, state = mock_graphql_api
+        url = str(server.make_url("/graphql"))
+
+        result = await _handle_review_thread("unresolve", "PRRC_comment3", "tok", url=url)
+        assert result["exit_code"] == 0
+        assert "Unresolved" in result["stderr"]
+        assert state["threads"]["PRRT_thread2"]["isResolved"] is False
+
+    async def test_unknown_comment_returns_error(self, mock_graphql_api):
+        server, _ = mock_graphql_api
+        url = str(server.make_url("/graphql"))
+
+        result = await _handle_review_thread("resolve", "PRRC_unknown", "tok", url=url)
+        assert result["exit_code"] == 1
+        assert "not found" in result["stderr"]
 
 
 # =========================================================================
