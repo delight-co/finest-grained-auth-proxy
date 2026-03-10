@@ -127,6 +127,7 @@ def dl_plugin():
 @pytest.fixture
 def dl_config():
     return {
+        "allow_insecure_download_urls": True,
         "plugins": {
             "dl": {
                 "credentials": [
