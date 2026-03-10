@@ -50,23 +50,27 @@ async def execute(args: list[str], resource: str, credential: dict) -> dict | No
 
     subcmd = args[0]
     rest = args[1:]
+
+    # Handle help before accessing resource/credential (help works without a repo)
+    if subcmd == "edit" and _has_help_flag(rest):
+        return await _help_with_extra("gh", ["issue", "edit", "--help"], _EDIT_EXTRA_HELP)
+
+    if subcmd == "comment":
+        if len(rest) > 0 and rest[0] == "edit" and _has_help_flag(rest[1:]):
+            return {"exit_code": 0, "stdout": _COMMENT_EDIT_HELP, "stderr": ""}
+        if _has_help_flag(rest):
+            return await _help_with_extra("gh", ["issue", "comment", "--help"], _COMMENT_EXTRA_HELP)
+
     owner, repo = resource.split("/", 1)
     token = credential["env"]["GH_TOKEN"]
 
     if subcmd == "edit":
-        if _has_help_flag(rest):
-            return await _help_with_extra("gh", ["issue", "edit", "--help"], _EDIT_EXTRA_HELP)
         if _has_old_and_new(rest):
             return await _handle_edit(rest, owner, repo, token)
 
     if subcmd == "comment":
-        if len(rest) > 0 and rest[0] == "edit":
-            if _has_help_flag(rest[1:]):
-                return {"exit_code": 0, "stdout": _COMMENT_EDIT_HELP, "stderr": ""}
-            if _has_old_and_new(rest[1:]):
-                return await _handle_comment_edit(rest[1:], owner, repo, token)
-        if _has_help_flag(rest):
-            return await _help_with_extra("gh", ["issue", "comment", "--help"], _COMMENT_EXTRA_HELP)
+        if len(rest) > 0 and rest[0] == "edit" and _has_old_and_new(rest[1:]):
+            return await _handle_comment_edit(rest[1:], owner, repo, token)
 
     return None
 

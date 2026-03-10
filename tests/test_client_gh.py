@@ -258,6 +258,54 @@ class TestHelp:
         assert code == 0
         assert "reorder" in capsys.readouterr().out
 
+    async def test_issue_help_without_repo(self, mock_proxy):
+        server, state = mock_proxy
+        code = await run(
+            ["issue", "--help"],
+            _url(server),
+            _get_remote_url=_no_git(),
+        )
+        assert code == 0
+        assert state["requests"][0]["resource"] == ""
+
+    async def test_pr_help_without_repo(self, mock_proxy):
+        server, state = mock_proxy
+        code = await run(
+            ["pr", "--help"],
+            _url(server),
+            _get_remote_url=_no_git(),
+        )
+        assert code == 0
+        assert state["requests"][0]["resource"] == ""
+
+    async def test_api_help_without_repo(self, mock_proxy):
+        server, state = mock_proxy
+        code = await run(
+            ["api", "--help"],
+            _url(server),
+            _get_remote_url=_no_git(),
+        )
+        assert code == 0
+        assert state["requests"][0]["resource"] == ""
+
+    async def test_issue_edit_help_without_repo(self, mock_proxy):
+        server, state = mock_proxy
+        code = await run(
+            ["issue", "edit", "--help"],
+            _url(server),
+            _get_remote_url=_no_git(),
+        )
+        assert code == 0
+
+    async def test_no_resource_without_help_still_fails(self, capsys):
+        code = await run(
+            ["issue", "list"],
+            "http://unused",
+            _get_remote_url=_no_git(),
+        )
+        assert code == 1
+        assert "Could not determine" in capsys.readouterr().err
+
 
 # =========================================================================
 # run(): api graphql prohibition

@@ -47,6 +47,25 @@ class TestCliEndpoint:
         })
         assert resp.status == 400
 
+    async def test_help_without_resource_succeeds(self, echo_client):
+        resp = await echo_client.post("/cli", json={
+            "tool": "echo",
+            "args": ["hello", "--help"],
+        })
+        assert resp.status == 200
+
+    async def test_help_without_resource_uses_dummy_credential(self, echo_plugin):
+        config = {"plugins": {"echo": {"credentials": [
+            {"token": "t", "resources": ["specific/only"]},
+        ]}}}
+        app = create_routes(config, {"echo": echo_plugin})
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.post("/cli", json={
+                "tool": "echo",
+                "args": ["hello", "--help"],
+            })
+            assert resp.status == 200
+
     async def test_unknown_tool_returns_400(self, echo_client):
         resp = await echo_client.post("/cli", json={
             "tool": "unknown",

@@ -596,11 +596,15 @@ async def run(
             resource = parse_git_remote_url(url)
 
     if not resource:
-        print(
-            "Error: Could not determine repository. Use -R owner/repo",
-            file=sys.stderr,
-        )
-        return 1
+        if _has_help_flag(args):
+            # Help doesn't need a real repository
+            resource = ""
+        else:
+            print(
+                "Error: Could not determine repository. Use -R owner/repo",
+                file=sys.stderr,
+            )
+            return 1
 
     # Transform args
     clean_args = strip_repo_flag(args)

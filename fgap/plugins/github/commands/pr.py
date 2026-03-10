@@ -49,30 +49,35 @@ async def execute(args: list[str], resource: str, credential: dict) -> dict | No
 
     subcmd = args[0]
     rest = args[1:]
-    owner, repo = resource.split("/", 1)
-    token = credential["env"]["GH_TOKEN"]
 
+    # Handle help before accessing resource/credential (help works without a repo)
     if _has_help_flag([subcmd]):
         return await _help_with_extra("gh", ["pr", "--help"], _PR_EXTRA_HELP)
 
-    if subcmd == "edit":
+    if subcmd == "edit" and _has_help_flag(rest):
+        return await _help_with_extra("gh", ["pr", "edit", "--help"], _EDIT_EXTRA_HELP)
+
+    if subcmd == "comment":
+        if len(rest) > 0 and rest[0] == "edit" and _has_help_flag(rest[1:]):
+            return {"exit_code": 0, "stdout": _COMMENT_EDIT_HELP, "stderr": ""}
         if _has_help_flag(rest):
-            return await _help_with_extra("gh", ["pr", "edit", "--help"], _EDIT_EXTRA_HELP)
+            return await _help_with_extra("gh", ["pr", "comment", "--help"], _COMMENT_EXTRA_HELP)
+
+    if subcmd == "review-thread" and (not rest or _has_help_flag(rest)):
+        return {"exit_code": 0, "stdout": _REVIEW_THREAD_HELP, "stderr": ""}
+
+    owner, repo = resource.split("/", 1)
+    token = credential["env"]["GH_TOKEN"]
+
+    if subcmd == "edit":
         if _has_old_and_new(rest):
             return await _handle_edit(rest, owner, repo, token)
 
     if subcmd == "comment":
-        if len(rest) > 0 and rest[0] == "edit":
-            if _has_help_flag(rest[1:]):
-                return {"exit_code": 0, "stdout": _COMMENT_EDIT_HELP, "stderr": ""}
-            if _has_old_and_new(rest[1:]):
-                return await _handle_comment_edit(rest[1:], owner, repo, token)
-        if _has_help_flag(rest):
-            return await _help_with_extra("gh", ["pr", "comment", "--help"], _COMMENT_EXTRA_HELP)
+        if len(rest) > 0 and rest[0] == "edit" and _has_old_and_new(rest[1:]):
+            return await _handle_comment_edit(rest[1:], owner, repo, token)
 
     if subcmd == "review-thread":
-        if not rest or _has_help_flag(rest):
-            return {"exit_code": 0, "stdout": _REVIEW_THREAD_HELP, "stderr": ""}
         if rest[0] in ("resolve", "unresolve") and len(rest) > 1:
             return await _handle_review_thread(rest[0], rest[1], token)
         return {"exit_code": 1, "stdout": "", "stderr": "Usage: pr review-thread resolve|unresolve <comment-id>"}
