@@ -41,3 +41,26 @@ class TestExecuteCli:
         result = await execute_cli("nonexistent_binary_xyz", [], {})
         assert result["exit_code"] == -1
         assert "not found" in result["stderr"].lower()
+
+    async def test_subprocess_sees_tty(self):
+        """Subprocess should see stdout/stderr as TTY (via PTY)."""
+        result = await execute_cli(
+            "python3", ["-c",
+                "import sys; "
+                "print(f'stdout={sys.stdout.isatty()} stderr={sys.stderr.isatty()}')"
+            ], {},
+        )
+        assert result["exit_code"] == 0
+        assert "stdout=True" in result["stdout"]
+        assert "stderr=True" in result["stdout"]
+
+    async def test_stdin_data(self):
+        result = await execute_cli("cat", [], {}, stdin_data="hello stdin")
+        assert result["exit_code"] == 0
+        assert "hello stdin" in result["stdout"]
+
+    async def test_crlf_normalized(self):
+        """PTY \\r\\n should be normalized to \\n in output."""
+        result = await execute_cli("echo", ["line"], {})
+        assert "\r\n" not in result["stdout"]
+        assert "line\n" in result["stdout"]
