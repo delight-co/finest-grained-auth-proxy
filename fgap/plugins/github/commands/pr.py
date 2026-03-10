@@ -116,6 +116,35 @@ async def _handle_edit(
     return {"exit_code": 0, "stdout": "", "stderr": f"Updated PR #{pr_number}"}
 
 
+async def _thread_has_comment(
+    thread_id: str, comment_id: str, token: str, *, url: str | None = None,
+) -> bool:
+    """Check remaining comment pages of a thread for a specific comment."""
+    query = """
+    query($threadId: ID!, $cursor: String) {
+        node(id: $threadId) {
+            ... on PullRequestReviewThread {
+                comments(first: 100, after: $cursor) {
+                    pageInfo { hasNextPage endCursor }
+                    nodes { id }
+                }
+            }
+        }
+    }
+    """
+    cursor = None
+    while True:
+        result = await execute_graphql(
+            query, {"threadId": thread_id, "cursor": cursor}, token, url=url,
+        )
+        comments = result["data"]["node"]["comments"]
+        if any(c["id"] == comment_id for c in comments["nodes"]):
+            return True
+        if not comments["pageInfo"]["hasNextPage"]:
+            return False
+        cursor = comments["pageInfo"]["endCursor"]
+
+
 async def _get_thread_id_for_comment(
     comment_id: str, token: str, *, url: str | None = None,
 ) -> str:
@@ -123,38 +152,64 @@ async def _get_thread_id_for_comment(
 
     Fetches the PR's review threads via the comment's parent PR,
     then finds the thread containing the given comment.
+    Paginates both review threads and comments within each thread.
     """
-    query = """
-    query($id: ID!) {
-        node(id: $id) {
-            ... on PullRequestReviewComment {
-                pullRequest {
-                    reviewThreads(first: 100) {
-                        nodes {
-                            id
-                            comments(first: 100) {
-                                nodes { id }
+    threads_cursor = None
+    validated = False
+
+    while True:
+        query = """
+        query($id: ID!, $threadsCursor: String) {
+            node(id: $id) {
+                ... on PullRequestReviewComment {
+                    pullRequest {
+                        reviewThreads(first: 100, after: $threadsCursor) {
+                            pageInfo { hasNextPage endCursor }
+                            nodes {
+                                id
+                                comments(first: 100) {
+                                    pageInfo { hasNextPage }
+                                    nodes { id }
+                                }
                             }
                         }
                     }
                 }
             }
         }
-    }
-    """
-    result = await execute_graphql(query, {"id": comment_id}, token, url=url)
-    node = result.get("data", {}).get("node")
-    if not node:
-        raise ValueError(f"Comment {comment_id} not found")
+        """
+        result = await execute_graphql(
+            query,
+            {"id": comment_id, "threadsCursor": threads_cursor},
+            token,
+            url=url,
+        )
+        node = result.get("data", {}).get("node")
 
-    pr = node.get("pullRequest")
-    if not pr:
-        raise ValueError(f"Node {comment_id} is not a PullRequestReviewComment")
+        if not validated:
+            if not node:
+                raise ValueError(f"Comment {comment_id} not found")
+            if not node.get("pullRequest"):
+                raise ValueError(
+                    f"Node {comment_id} is not a PullRequestReviewComment"
+                )
+            validated = True
 
-    for thread in pr["reviewThreads"]["nodes"]:
-        for comment in thread["comments"]["nodes"]:
-            if comment["id"] == comment_id:
+        threads_data = node["pullRequest"]["reviewThreads"]
+
+        for thread in threads_data["nodes"]:
+            comments = thread["comments"]
+            if any(c["id"] == comment_id for c in comments["nodes"]):
                 return thread["id"]
+            if comments["pageInfo"]["hasNextPage"]:
+                if await _thread_has_comment(
+                    thread["id"], comment_id, token, url=url,
+                ):
+                    return thread["id"]
+
+        if not threads_data["pageInfo"]["hasNextPage"]:
+            break
+        threads_cursor = threads_data["pageInfo"]["endCursor"]
 
     raise ValueError(f"Could not find review thread for comment {comment_id}")
 
