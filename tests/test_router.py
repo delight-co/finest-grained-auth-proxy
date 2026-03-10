@@ -267,3 +267,24 @@ class TestDownloadEndpoint:
             "tool": "gh", "resource": "o/r", "url": url,
         })
         assert resp.status == 502
+
+    async def test_rejects_http_url(self, dl_plugin):
+        """Without allow_insecure_download_urls, HTTP URLs are rejected."""
+        strict_config = {
+            "plugins": {
+                "dl": {
+                    "credentials": [
+                        {"token": "test_gh_token", "resources": ["*"]},
+                    ]
+                }
+            }
+        }
+        app = create_routes(strict_config, {"dl": dl_plugin})
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.post("/download", json={
+                "tool": "gh", "resource": "o/r",
+                "url": "http://evil.com/payload",
+            })
+            assert resp.status == 400
+            text = await resp.text()
+            assert "HTTPS" in text

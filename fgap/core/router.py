@@ -133,6 +133,12 @@ def create_routes(config: dict, plugins: dict[str, Plugin]) -> web.Application:
                     text="Missing required fields: tool, resource, url",
                 )
 
+            if not url.startswith("https://"):
+                if not config.get("allow_insecure_download_urls", False):
+                    raise web.HTTPBadRequest(
+                        text="Only HTTPS URLs are allowed for downloads",
+                    )
+
             plugin = find_plugin_for_tool(tool, plugins)
             if not plugin:
                 raise web.HTTPBadRequest(
