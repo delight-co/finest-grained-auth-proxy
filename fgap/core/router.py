@@ -29,7 +29,7 @@ def create_routes(config: dict, plugins: dict[str, Plugin]) -> web.Application:
     # Shared HTTP session lifecycle
     timeouts = config.get("timeouts", {})
     http_timeout = timeouts.get("http", 30)
-    cli_timeout = timeouts.get("cli", 60)
+    cli_timeout = timeouts.get("cli")
 
     async def session_ctx(app):
         session = aiohttp.ClientSession(

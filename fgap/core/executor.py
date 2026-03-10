@@ -6,7 +6,7 @@ async def execute_cli(
     binary: str,
     args: list[str],
     env_overrides: dict,
-    timeout: int = 60,
+    timeout: int | None = None,
     stdin_data: str | None = None,
 ) -> dict:
     """Execute a CLI command as an async subprocess.
@@ -43,9 +43,14 @@ async def execute_cli(
             "stderr": f"Command not found: {binary}",
         }
 
+    input_bytes = stdin_data.encode("utf-8") if stdin_data is not None else None
     try:
-        input_bytes = stdin_data.encode("utf-8") if stdin_data is not None else None
-        stdout, stderr = await asyncio.wait_for(proc.communicate(input=input_bytes), timeout=timeout)
+        if timeout is not None:
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(input=input_bytes), timeout=timeout,
+            )
+        else:
+            stdout, stderr = await proc.communicate(input=input_bytes)
     except asyncio.TimeoutError:
         proc.kill()
         await proc.wait()
