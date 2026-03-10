@@ -11,6 +11,7 @@ Usage:
 """
 
 import asyncio
+import fnmatch
 import json
 import os
 import re
@@ -201,6 +202,137 @@ async def _handle_pr_checkout(
 
     if err:
         print(err, file=sys.stderr)
+
+    return 0
+
+
+# =============================================================================
+# Release Download (client-side)
+# =============================================================================
+
+
+def _parse_release_download_args(
+    args: list[str],
+) -> tuple[str | None, list[str], str, bool, bool]:
+    """Parse ``release download`` args.
+
+    Returns ``(tag, patterns, output_dir, clobber, skip_existing)``.
+    """
+    tag = None
+    patterns: list[str] = []
+    output_dir = "."
+    clobber = False
+    skip_existing = False
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg in ("-p", "--pattern") and i + 1 < len(args):
+            patterns.append(args[i + 1])
+            i += 2
+            continue
+        if arg.startswith("--pattern="):
+            patterns.append(arg[len("--pattern="):])
+        elif arg in ("-D", "--dir") and i + 1 < len(args):
+            output_dir = args[i + 1]
+            i += 2
+            continue
+        elif arg.startswith("--dir="):
+            output_dir = arg[len("--dir="):]
+        elif arg == "--clobber":
+            clobber = True
+        elif arg == "--skip-existing":
+            skip_existing = True
+        elif not arg.startswith("-") and tag is None:
+            tag = arg
+        i += 1
+    return tag, patterns, output_dir, clobber, skip_existing
+
+
+async def _handle_release_download(
+    args: list[str],
+    resource: str,
+    proxy_url: str,
+) -> int:
+    """Handle ``release download`` client-side.
+
+    ``gh release download`` writes files to the local filesystem, which
+    cannot work when the command runs on the proxy server.  We decompose
+    it into:
+
+    1. ``release view`` (API, via proxy) to list assets
+    2. Download each matching asset via the proxy's ``/download`` endpoint
+    3. Write to local disk
+    """
+    tag, patterns, output_dir, clobber, skip_existing = (
+        _parse_release_download_args(args)
+    )
+    if not tag:
+        print("Error: release tag required", file=sys.stderr)
+        return 1
+
+    # 1. Get release assets via proxy
+    async with ProxyClient(proxy_url) as client:
+        result = await client.call_cli(
+            "gh",
+            ["release", "view", tag, "--json", "assets"],
+            resource,
+        )
+
+    if result["exit_code"] != 0:
+        if result["stderr"]:
+            print(result["stderr"], file=sys.stderr)
+        return result["exit_code"]
+
+    try:
+        assets = json.loads(result["stdout"])["assets"]
+    except (json.JSONDecodeError, KeyError) as e:
+        print(f"Error: Failed to parse release info: {e}", file=sys.stderr)
+        return 1
+
+    # 2. Filter by patterns
+    if patterns:
+        filtered = []
+        for asset in assets:
+            for pat in patterns:
+                if fnmatch.fnmatch(asset["name"], pat):
+                    filtered.append(asset)
+                    break
+        assets = filtered
+
+    if not assets:
+        # Match gh behavior: no assets = error
+        print("no assets match the file pattern", file=sys.stderr)
+        return 1
+
+    # 3. Download each asset
+    os.makedirs(output_dir, exist_ok=True)
+
+    async with ProxyClient(proxy_url) as client:
+        for asset in assets:
+            dest = os.path.join(output_dir, asset["name"])
+
+            if os.path.exists(dest):
+                if skip_existing:
+                    continue
+                if not clobber:
+                    print(
+                        f"{asset['name']} already exists "
+                        f"(use `--clobber` to overwrite file "
+                        f"or `--skip-existing` to skip file)",
+                        file=sys.stderr,
+                    )
+                    return 1
+
+            try:
+                await client.download_asset(
+                    "gh", resource, asset["apiUrl"], dest,
+                )
+            except (ConnectionError, ValueError) as e:
+                print(
+                    f"Error downloading {asset['name']}: {e}",
+                    file=sys.stderr,
+                )
+                return 1
 
     return 0
 
@@ -506,6 +638,17 @@ async def run(
         )
         return await _handle_pr_checkout(
             checkout_args, resource, proxy_url, _git=_git,
+        )
+
+    # release download: handle client-side (writes files to local disk)
+    if (
+        len(clean_args) >= 2
+        and clean_args[0] == "release"
+        and clean_args[1] == "download"
+        and not _has_help_flag(clean_args)
+    ):
+        return await _handle_release_download(
+            clean_args[2:], resource, proxy_url,
         )
 
     # Call proxy

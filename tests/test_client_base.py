@@ -211,3 +211,55 @@ class TestGetAuthStatus:
         client = _client(server)
         with pytest.raises(ValueError, match="500"):
             await client.get_auth_status()
+
+
+# =========================================================================
+# download_asset
+# =========================================================================
+
+
+@pytest.fixture
+async def mock_download_proxy():
+    """Mock proxy with /download endpoint."""
+    app = web.Application()
+    state = {"responses": []}
+
+    async def handle_download(request):
+        data = await request.json()
+        state["last_request"] = data
+        if state["responses"]:
+            return state["responses"].pop(0)
+        return web.Response(
+            body=b"file-bytes",
+            content_type="application/octet-stream",
+        )
+
+    app.router.add_post("/download", handle_download)
+    async with TestServer(app) as server:
+        yield server, state
+
+
+class TestDownloadAsset:
+    async def test_writes_file(self, mock_download_proxy, tmp_path):
+        server, state = mock_download_proxy
+        dest = str(tmp_path / "out.tar.gz")
+        client = _client(server)
+        await client.download_asset("gh", "o/r", "https://example.com/asset", dest)
+        with open(dest, "rb") as f:
+            assert f.read() == b"file-bytes"
+        assert state["last_request"]["resource"] == "o/r"
+
+    async def test_error_raises(self, mock_download_proxy, tmp_path):
+        server, state = mock_download_proxy
+        state["responses"].append(
+            web.Response(text="Not Found", status=404),
+        )
+        dest = str(tmp_path / "out.bin")
+        client = _client(server)
+        with pytest.raises(ValueError, match="404"):
+            await client.download_asset("gh", "o/r", "https://x", dest)
+
+    async def test_connection_error(self, tmp_path):
+        client = ProxyClient("http://127.0.0.1:1")
+        with pytest.raises(ConnectionError, match="Cannot connect"):
+            await client.download_asset("gh", "o/r", "https://x", str(tmp_path / "out"))

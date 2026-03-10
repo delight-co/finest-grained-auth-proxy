@@ -1,6 +1,7 @@
 import logging
 
 import pytest
+from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
 from fgap.core.router import create_routes
@@ -197,3 +198,72 @@ class TestAuditLog:
             and "exit_code=0" in r.message
             for r in caplog.records
         )
+
+
+# =========================================================================
+# /download endpoint
+# =========================================================================
+
+
+@pytest.fixture
+async def mock_upstream():
+    """Mock upstream asset server."""
+    app = web.Application()
+
+    async def handle_asset(request):
+        auth = request.headers.get("Authorization", "")
+        if auth != "Bearer test_gh_token":
+            return web.Response(status=401, text="Unauthorized")
+        return web.Response(
+            body=b"binary-content-here",
+            content_type="application/octet-stream",
+        )
+
+    async def handle_error(request):
+        return web.Response(status=404, text="Not Found")
+
+    app.router.add_get("/asset/ok", handle_asset)
+    app.router.add_get("/asset/missing", handle_error)
+    async with TestServer(app) as server:
+        yield server
+
+
+@pytest.fixture
+async def dl_client(dl_plugin, dl_config):
+    app = create_routes(dl_config, {"dl": dl_plugin})
+    async with TestClient(TestServer(app)) as client:
+        yield client
+
+
+class TestDownloadEndpoint:
+    async def test_streams_binary(self, dl_client, mock_upstream):
+        url = str(mock_upstream.make_url("/asset/ok"))
+        resp = await dl_client.post("/download", json={
+            "tool": "gh", "resource": "o/r", "url": url,
+        })
+        assert resp.status == 200
+        body = await resp.read()
+        assert body == b"binary-content-here"
+
+    async def test_missing_fields(self, dl_client):
+        resp = await dl_client.post("/download", json={
+            "tool": "gh", "resource": "o/r",
+        })
+        assert resp.status == 400
+
+    async def test_no_credential(self, dl_client):
+        resp = await dl_client.post("/download", json={
+            "tool": "gh", "resource": "nope/nope", "url": "https://x",
+        })
+        # dl_config uses "*" so this will match — use unknown tool instead
+        resp = await dl_client.post("/download", json={
+            "tool": "unknown", "resource": "o/r", "url": "https://x",
+        })
+        assert resp.status == 400
+
+    async def test_upstream_error(self, dl_client, mock_upstream):
+        url = str(mock_upstream.make_url("/asset/missing"))
+        resp = await dl_client.post("/download", json={
+            "tool": "gh", "resource": "o/r", "url": url,
+        })
+        assert resp.status == 502

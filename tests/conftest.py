@@ -77,6 +77,30 @@ def echo_config():
     }
 
 
+class DownloadPlugin(Plugin):
+    """Test plugin that provides GH_TOKEN for download tests."""
+
+    @property
+    def name(self) -> str:
+        return "dl"
+
+    @property
+    def tools(self) -> list[str]:
+        return ["gh"]
+
+    def select_credential(self, resource: str, config: dict) -> dict | None:
+        for cred in config.get("credentials", []):
+            for pattern in cred.get("resources", []):
+                if _match_resource(pattern, resource):
+                    return {
+                        "env": {
+                            "GH_TOKEN": cred["token"],
+                            "GH_HOST": "github.com",
+                        }
+                    }
+        return None
+
+
 @pytest.fixture
 def ft_plugin():
     return FallthroughPlugin()
@@ -89,6 +113,24 @@ def ft_config():
             "ft": {
                 "credentials": [
                     {"token": "ft_tok", "resources": ["*"]},
+                ]
+            }
+        }
+    }
+
+
+@pytest.fixture
+def dl_plugin():
+    return DownloadPlugin()
+
+
+@pytest.fixture
+def dl_config():
+    return {
+        "plugins": {
+            "dl": {
+                "credentials": [
+                    {"token": "test_gh_token", "resources": ["*"]},
                 ]
             }
         }
