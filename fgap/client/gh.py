@@ -11,6 +11,7 @@ Usage:
 """
 
 import asyncio
+import json
 import os
 import re
 import sys
@@ -83,6 +84,125 @@ async def _run_git(*args: str) -> str | None:
     except FileNotFoundError:
         pass
     return None
+
+
+async def _exec_git(*args: str) -> tuple[int, str, str]:
+    """Run a git command, returning ``(exit_code, stdout, stderr)``."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "git", *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+        return (
+            proc.returncode or 0,
+            stdout.decode("utf-8", errors="replace").strip(),
+            stderr.decode("utf-8", errors="replace").strip(),
+        )
+    except FileNotFoundError:
+        return (1, "", "git: command not found")
+
+
+# =============================================================================
+# PR Checkout (client-side)
+# =============================================================================
+
+
+def _parse_pr_checkout_args(args: list[str]) -> tuple[str | None, str | None]:
+    """Parse ``pr checkout`` positional and flag args.
+
+    Returns ``(pr_number, local_branch_name)``.
+    """
+    number = None
+    local_branch = None
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg in ("-b", "--branch") and i + 1 < len(args):
+            local_branch = args[i + 1]
+            i += 2
+            continue
+        if arg.startswith("-b") and len(arg) > 2:
+            local_branch = arg[2:]
+        elif arg.startswith("--branch="):
+            local_branch = arg[len("--branch="):]
+        elif not arg.startswith("-") and number is None:
+            number = arg
+        i += 1
+    return number, local_branch
+
+
+async def _handle_pr_checkout(
+    args: list[str],
+    resource: str,
+    proxy_url: str,
+    *,
+    _git=None,
+) -> int:
+    """Handle ``pr checkout`` client-side.
+
+    ``gh pr checkout`` needs local git operations (fetch + checkout) that
+    cannot run on the proxy server.  We decompose it into:
+
+    1. ``pr view`` (API, via proxy) to get the head branch name
+    2. ``git fetch origin <branch>`` (local)
+    3. ``git checkout <branch>`` (local)
+    """
+    _git = _git or _exec_git
+
+    number, local_branch = _parse_pr_checkout_args(args)
+    if not number:
+        print("Error: PR number required", file=sys.stderr)
+        return 1
+
+    # 1. Get PR head branch via proxy
+    async with ProxyClient(proxy_url) as client:
+        try:
+            result = await client.call_cli(
+                "gh",
+                ["pr", "view", number, "--json", "headRefName"],
+                resource,
+            )
+        except (ConnectionError, ValueError) as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+
+    if result["exit_code"] != 0:
+        if result["stderr"]:
+            print(result["stderr"], file=sys.stderr)
+        return result["exit_code"]
+
+    try:
+        pr_data = json.loads(result["stdout"])
+        head_branch = pr_data["headRefName"]
+    except (json.JSONDecodeError, KeyError) as e:
+        print(f"Error: Failed to parse PR info: {e}", file=sys.stderr)
+        return 1
+
+    branch_name = local_branch or head_branch
+
+    # 2. Fetch the branch
+    rc, _, err = await _git("fetch", "origin", head_branch)
+    if rc != 0:
+        print(f"Error: git fetch failed: {err}", file=sys.stderr)
+        return 1
+
+    # 3. Checkout the branch
+    rc, _, err = await _git("checkout", branch_name)
+    if rc != 0:
+        # Branch doesn't exist locally — create it tracking the remote
+        rc, _, err = await _git(
+            "checkout", "-b", branch_name, f"origin/{head_branch}",
+        )
+        if rc != 0:
+            print(f"Error: git checkout failed: {err}", file=sys.stderr)
+            return 1
+
+    if err:
+        print(err, file=sys.stderr)
+
+    return 0
 
 
 # =============================================================================
@@ -289,6 +409,7 @@ async def run(
     *,
     _get_remote_url=None,
     _get_branch=None,
+    _git=None,
 ) -> int:
     """Main wrapper logic. Returns exit code.
 
@@ -370,6 +491,22 @@ async def run(
         if branch:
             owner = resource.split("/")[0]
             clean_args.extend(["--head", f"{owner}:{branch}"])
+
+    # pr checkout / co: handle client-side (git operations can't run on server)
+    if (
+        (
+            len(clean_args) >= 2
+            and clean_args[0] == "pr"
+            and clean_args[1] == "checkout"
+        )
+        or (len(clean_args) >= 1 and clean_args[0] == "co")
+    ) and not _has_help_flag(clean_args):
+        checkout_args = (
+            clean_args[2:] if clean_args[0] == "pr" else clean_args[1:]
+        )
+        return await _handle_pr_checkout(
+            checkout_args, resource, proxy_url, _git=_git,
+        )
 
     # Call proxy
     async with ProxyClient(proxy_url) as client:
