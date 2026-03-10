@@ -1,4 +1,6 @@
 import pytest
+from aiohttp import web
+from aiohttp.test_utils import TestServer
 
 from fgap.plugins.base import Plugin
 
@@ -136,3 +138,46 @@ def dl_config():
             }
         }
     }
+
+
+# =========================================================================
+# gh client mock proxy (shared across test_client_gh_*.py)
+# =========================================================================
+
+
+@pytest.fixture
+async def mock_proxy():
+    """Mock fgap proxy."""
+    app = web.Application()
+    state = {
+        "responses": [],
+        "requests": [],
+        "auth_status": None,
+        "download_responses": [],
+        "download_requests": [],
+    }
+
+    async def handle_cli(request):
+        data = await request.json()
+        state["requests"].append(data)
+        if state["responses"]:
+            return state["responses"].pop(0)
+        return web.json_response({"exit_code": 0, "stdout": "", "stderr": ""})
+
+    async def handle_download(request):
+        data = await request.json()
+        state["download_requests"].append(data)
+        if state["download_responses"]:
+            return state["download_responses"].pop(0)
+        return web.Response(body=b"asset-bytes", content_type="application/octet-stream")
+
+    async def handle_auth_status(request):
+        if state["auth_status"]:
+            return state["auth_status"]
+        return web.json_response({"plugins": {}})
+
+    app.router.add_post("/cli", handle_cli)
+    app.router.add_post("/download", handle_download)
+    app.router.add_get("/auth/status", handle_auth_status)
+    async with TestServer(app) as server:
+        yield server, state
