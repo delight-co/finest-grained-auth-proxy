@@ -23,7 +23,7 @@ async def execute_cli(
     """
     env = {
         **os.environ,
-        "GH_FORCE_TTY": "1",
+        "GH_FORCE_TTY": "true",
         "NO_COLOR": "1",
         **env_overrides,
     }

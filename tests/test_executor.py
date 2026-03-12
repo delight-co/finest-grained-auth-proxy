@@ -46,7 +46,7 @@ class TestExecuteCli:
         """GH_FORCE_TTY should be set in subprocess environment."""
         result = await execute_cli("printenv", ["GH_FORCE_TTY"], {})
         assert result["exit_code"] == 0
-        assert result["stdout"].strip() == "1"
+        assert result["stdout"].strip() == "true"
 
     async def test_no_color_injected(self):
         """NO_COLOR should be set in subprocess environment."""
