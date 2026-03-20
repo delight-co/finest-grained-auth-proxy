@@ -59,6 +59,22 @@
       ]
     },
 
+    // HTTP proxy: forward requests to upstream APIs with credential injection.
+    // No CLI binary needed — sandbox uses curl directly.
+    // Usage: curl $FGAP_PROXY_URL/proxy/{service}/{path}
+    "http_proxy": {
+      "services": {
+        // Example: freee accounting API
+        // "freee": {
+        //   "upstream": "https://api.freee.co.jp",
+        //   "auth": "bearer",
+        //   "credentials": [
+        //     {"token": "YOUR_ACCESS_TOKEN", "resources": ["*"]}
+        //   ]
+        // }
+      }
+    },
+
     // Google: gog CLI (Google Workspace)
     "google": {
       "credentials": [
