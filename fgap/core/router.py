@@ -239,5 +239,11 @@ def create_app(config: dict) -> web.Application:
     except (ImportError, ValueError):
         pass
 
+    try:
+        from fgap.plugins.notion import NotionPlugin
+        register_plugin(NotionPlugin)
+    except (ImportError, ValueError):
+        pass
+
     plugins = discover_plugins(config)
     return create_routes(config, plugins)

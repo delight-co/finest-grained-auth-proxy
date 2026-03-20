@@ -48,6 +48,17 @@
       ]
     },
 
+    // Notion: notion CLI (4ier/notion-cli)
+    "notion": {
+      "credentials": [
+        {
+          // Internal Integration Token from https://www.notion.so/profile/integrations
+          "token": "ntn_YOUR_INTEGRATION_TOKEN",
+          "resources": ["*"]
+        }
+      ]
+    },
+
     // Google: gog CLI (Google Workspace)
     "google": {
       "credentials": [

@@ -5,6 +5,7 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 ARG TARGETARCH
 ARG GH_VERSION=2.86.0
 ARG GOG_VERSION=0.11.0-delight.4
+ARG NOTION_CLI_VERSION=0.3.0
 
 RUN apt-get update && apt-get install -y --no-install-recommends git curl \
     && curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${TARGETARCH}.tar.gz" \
@@ -14,7 +15,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends git curl \
     && curl -fsSL "https://github.com/delight-co/gogcli/releases/download/v${GOG_VERSION}/gogcli_${GOG_VERSION}_linux_${TARGETARCH}.tar.gz" \
        | tar xz -C /tmp/gogcli \
     && mv /tmp/gogcli/gog /usr/local/bin/gog \
-    && rm -rf /tmp/gh_* /tmp/gogcli /var/lib/apt/lists/*
+    && curl -fsSL "https://github.com/4ier/notion-cli/releases/download/v${NOTION_CLI_VERSION}/notion-cli_${NOTION_CLI_VERSION}_linux_${TARGETARCH}.tar.gz" \
+       | tar xz -C /tmp \
+    && mv /tmp/notion /usr/local/bin/notion \
+    && rm -rf /tmp/gh_* /tmp/gogcli /tmp/notion-cli* /var/lib/apt/lists/*
 
 WORKDIR /app
 
