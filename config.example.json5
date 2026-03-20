@@ -64,12 +64,27 @@
     // Usage: curl $FGAP_PROXY_URL/proxy/{service}/{path}
     "http_proxy": {
       "services": {
-        // Example: freee accounting API
-        // "freee": {
-        //   "upstream": "https://api.freee.co.jp",
+        // Example: static bearer token
+        // "myapi": {
+        //   "upstream": "https://api.example.com",
         //   "auth": "bearer",
         //   "credentials": [
         //     {"token": "YOUR_ACCESS_TOKEN", "resources": ["*"]}
+        //   ]
+        // },
+
+        // Example: OAuth2 with automatic token refresh
+        // "freee": {
+        //   "upstream": "https://api.freee.co.jp",
+        //   "auth": "oauth2",
+        //   "oauth2": {
+        //     "token_url": "https://accounts.secure.freee.co.jp/public_api/token",
+        //     "client_id": "YOUR_CLIENT_ID",
+        //     "client_secret": "YOUR_CLIENT_SECRET",
+        //     "refresh_token": "YOUR_REFRESH_TOKEN"
+        //   },
+        //   "credentials": [
+        //     {"token": "INITIAL_ACCESS_TOKEN", "resources": ["*"]}
         //   ]
         // }
       }

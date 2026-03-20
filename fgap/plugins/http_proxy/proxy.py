@@ -2,9 +2,14 @@
 
 Generalizes the git smart HTTP proxy pattern: receives HTTP requests,
 injects Authorization header, forwards to upstream.
+
+Supports two auth modes:
+- "bearer": static token from credentials array
+- "oauth2": automatic token refresh via OAuth2TokenManager
 """
 
 import logging
+import urllib.parse
 
 import aiohttp
 from aiohttp import web
@@ -35,7 +40,9 @@ def _select_token(resource: str, service_config: dict) -> str | None:
     return None
 
 
-def make_routes(config: dict) -> list[tuple[str, str, callable]]:
+def make_routes(
+    config: dict, *, state_dir: str = "",
+) -> list[tuple[str, str, callable]]:
     """Create HTTP proxy routes for all configured services.
 
     For each service, creates a catch-all route:
@@ -48,6 +55,30 @@ def make_routes(config: dict) -> list[tuple[str, str, callable]]:
     if not services:
         return []
 
+    # Initialize OAuth2 token managers for services with auth=oauth2
+    token_managers = {}
+    for name, svc in services.items():
+        if svc.get("auth") == "oauth2" and "oauth2" in svc:
+            from .oauth2 import OAuth2TokenManager
+
+            oauth2_cfg = svc["oauth2"]
+            # Use initial access_token from credentials if available
+            initial_access = ""
+            if svc.get("credentials"):
+                initial_access = svc["credentials"][0].get("token", "")
+
+            kwargs = {
+                "service_name": name,
+                "token_url": oauth2_cfg["token_url"],
+                "client_id": oauth2_cfg["client_id"],
+                "client_secret": oauth2_cfg["client_secret"],
+                "initial_refresh_token": oauth2_cfg["refresh_token"],
+                "initial_access_token": initial_access,
+            }
+            if state_dir:
+                kwargs["state_dir"] = state_dir
+            token_managers[name] = OAuth2TokenManager(**kwargs)
+
     async def handle_proxy(request: web.Request) -> web.Response:
         service = request.match_info["service"]
         path = request.match_info.get("path", "")
@@ -58,23 +89,37 @@ def make_routes(config: dict) -> list[tuple[str, str, callable]]:
                 text=f"Unknown proxy service: {service}"
             )
 
-        # Resource defaults to "default" — services can use resource
-        # patterns for multi-tenant credential selection
-        resource = request.query.get("_resource", "default")
+        upstream = service_config["upstream"].rstrip("/")
+        auth_type = service_config.get("auth", "bearer")
+        extra_headers = service_config.get("extra_headers", {})
 
-        token = _select_token(resource, service_config)
+        # Get token based on auth type
+        if auth_type == "oauth2" and service in token_managers:
+            token = await token_managers[service].get_valid_token()
+            effective_auth = "bearer"  # OAuth2 always uses Bearer
+        else:
+            resource = request.query.get("_resource", "default")
+            token = _select_token(resource, service_config)
+            effective_auth = auth_type
+
         if not token:
             raise web.HTTPForbidden(
                 text=f"No credential for proxy service: {service}"
             )
 
-        upstream = service_config["upstream"].rstrip("/")
-        auth_type = service_config.get("auth", "bearer")
-        extra_headers = service_config.get("extra_headers", {})
-
-        return await _proxy_request(
-            request, upstream, path, token, auth_type, extra_headers,
+        resp = await _proxy_request(
+            request, upstream, path, token, effective_auth, extra_headers,
         )
+
+        # Auto-retry on 401 for OAuth2 services
+        if resp.status == 401 and service in token_managers:
+            logger.info("Got 401 from %s, refreshing token", service)
+            token = await token_managers[service].handle_401()
+            resp = await _proxy_request(
+                request, upstream, path, token, "bearer", extra_headers,
+            )
+
+        return resp
 
     # Single route pattern handles all services and HTTP methods
     pattern = "/proxy/{service}/{path:.*}"
@@ -98,17 +143,16 @@ async def _proxy_request(
     upstream_url = f"{upstream}/{path}"
     if request.query_string:
         # Strip internal _resource param before forwarding
-        import urllib.parse
-        params = urllib.parse.parse_qs(request.query_string, keep_blank_values=True)
+        params = urllib.parse.parse_qs(
+            request.query_string, keep_blank_values=True,
+        )
         params.pop("_resource", None)
         filtered_qs = urllib.parse.urlencode(params, doseq=True)
         if filtered_qs:
             upstream_url += f"?{filtered_qs}"
 
     # Build auth header
-    if auth_type == "bearer":
-        auth_header = f"Bearer {token}"
-    elif auth_type == "basic":
+    if auth_type == "basic":
         import base64
         auth_header = f"Basic {base64.b64encode(token.encode()).decode()}"
     else:
