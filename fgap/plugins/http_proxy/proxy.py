@@ -69,12 +69,23 @@ def make_routes(
 
             kwargs = {
                 "service_name": name,
-                "token_url": oauth2_cfg["token_url"],
-                "client_id": oauth2_cfg["client_id"],
-                "client_secret": oauth2_cfg["client_secret"],
-                "initial_refresh_token": oauth2_cfg["refresh_token"],
                 "initial_access_token": initial_access,
             }
+
+            # Delegated refresh: external API manages tokens centrally
+            if "refresh_url" in oauth2_cfg:
+                kwargs["refresh_url"] = oauth2_cfg["refresh_url"]
+                kwargs["employee_id"] = oauth2_cfg["employee_id"]
+                kwargs["provider"] = oauth2_cfg["provider"]
+            else:
+                # Direct refresh: POST to token endpoint
+                kwargs["token_url"] = oauth2_cfg["token_url"]
+                kwargs["client_id"] = oauth2_cfg["client_id"]
+                kwargs["client_secret"] = oauth2_cfg["client_secret"]
+                kwargs["initial_refresh_token"] = oauth2_cfg.get(
+                    "refresh_token", "",
+                )
+
             if state_dir:
                 kwargs["state_dir"] = state_dir
             token_managers[name] = OAuth2TokenManager(**kwargs)
