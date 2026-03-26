@@ -5,6 +5,10 @@ Manages access_token + refresh_token lifecycle:
 - Refreshes automatically when expired
 - Persists token state to disk (refresh_token is single-use for some providers)
 
+Supports two refresh modes:
+- Direct: POST to token_url with client credentials (default)
+- Delegated: POST to an external API that manages refresh centrally
+
 Token state file format::
 
     {
@@ -31,23 +35,50 @@ _DEFAULT_STATE_DIR = "/var/lib/fgap/tokens"
 
 
 class OAuth2TokenManager:
-    """Manages OAuth2 tokens with automatic refresh."""
+    """Manages OAuth2 tokens with automatic refresh.
+
+    Two modes:
+
+    **Direct mode** (default): Refreshes tokens by POSTing to ``token_url``
+    with ``client_id``, ``client_secret``, and ``refresh_token``.
+
+    **Delegated mode**: When ``refresh_url``, ``employee_id``, and
+    ``provider`` are set, delegates refresh to an external API. The external
+    API manages refresh tokens centrally, avoiding conflicts when multiple
+    processes share the same single-use refresh token.
+    """
 
     def __init__(
         self,
         service_name: str,
-        token_url: str,
-        client_id: str,
-        client_secret: str,
-        initial_refresh_token: str,
+        token_url: str = "",
+        client_id: str = "",
+        client_secret: str = "",
+        initial_refresh_token: str = "",
         initial_access_token: str = "",
         state_dir: str = _DEFAULT_STATE_DIR,
+        *,
+        refresh_url: str = "",
+        employee_id: str = "",
+        provider: str = "",
     ):
         self.service_name = service_name
         self.token_url = token_url
         self.client_id = client_id
         self.client_secret = client_secret
         self._state_dir = state_dir
+
+        # Delegated refresh config
+        self._refresh_url = refresh_url
+        self._employee_id = employee_id
+        self._provider = provider
+        self._delegated = bool(refresh_url and employee_id and provider)
+
+        if self._delegated:
+            logger.info(
+                "OAuth2 delegated refresh for %s via %s",
+                service_name, refresh_url,
+            )
 
         # Try to load persisted state, fall back to initial values
         state = self._load_state()
@@ -76,8 +107,19 @@ class OAuth2TokenManager:
         return self._access_token
 
     async def refresh(self) -> None:
-        """Refresh the access token using the refresh token."""
-        logger.info("Refreshing OAuth2 token for %s", self.service_name)
+        """Refresh the access token.
+
+        In delegated mode, asks the external API to perform the refresh.
+        In direct mode, POSTs to the token endpoint directly.
+        """
+        if self._delegated:
+            await self._refresh_delegated()
+        else:
+            await self._refresh_direct()
+
+    async def _refresh_direct(self) -> None:
+        """Refresh by POSTing to the token endpoint directly."""
+        logger.info("Refreshing OAuth2 token for %s (direct)", self.service_name)
 
         data = {
             "grant_type": "refresh_token",
@@ -111,6 +153,44 @@ class OAuth2TokenManager:
         self._save_state()
         logger.info(
             "OAuth2 token refreshed for %s (expires in %ds)",
+            self.service_name,
+            result.get("expires_in", 0),
+        )
+
+    async def _refresh_delegated(self) -> None:
+        """Refresh by delegating to an external API."""
+        logger.info(
+            "Refreshing OAuth2 token for %s (delegated via %s)",
+            self.service_name, self._refresh_url,
+        )
+
+        payload = {
+            "employee_id": self._employee_id,
+            "provider": self._provider,
+        }
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                self._refresh_url,
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=30),
+            ) as resp:
+                if resp.status != 200:
+                    text = await resp.text()
+                    raise RuntimeError(
+                        f"Delegated OAuth2 refresh failed for {self.service_name}: "
+                        f"HTTP {resp.status}: {text}"
+                    )
+
+                result = await resp.json()
+
+        self._access_token = result["access_token"]
+        self._expires_at = time.time() + result.get("expires_in", 3600)
+        # refresh_token is managed by the external API, not stored locally
+
+        self._save_state()
+        logger.info(
+            "OAuth2 token refreshed for %s via delegated API (expires in %ds)",
             self.service_name,
             result.get("expires_in", 0),
         )
