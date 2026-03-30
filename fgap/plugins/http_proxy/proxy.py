@@ -77,6 +77,15 @@ def make_routes(
                 kwargs["refresh_url"] = oauth2_cfg["refresh_url"]
                 kwargs["employee_id"] = oauth2_cfg["employee_id"]
                 kwargs["provider"] = oauth2_cfg["provider"]
+                # Auth token for the refresh API (e.g. JWT)
+                if "refresh_api_token" in oauth2_cfg:
+                    kwargs["refresh_api_token"] = oauth2_cfg[
+                        "refresh_api_token"
+                    ]
+                elif config.get("internal_api_token"):
+                    kwargs["refresh_api_token"] = config[
+                        "internal_api_token"
+                    ]
             else:
                 # Direct refresh: POST to token endpoint
                 kwargs["token_url"] = oauth2_cfg["token_url"]
