@@ -61,6 +61,7 @@ class OAuth2TokenManager:
         refresh_url: str = "",
         employee_id: str = "",
         provider: str = "",
+        refresh_api_token: str = "",
     ):
         self.service_name = service_name
         self.token_url = token_url
@@ -72,6 +73,7 @@ class OAuth2TokenManager:
         self._refresh_url = refresh_url
         self._employee_id = employee_id
         self._provider = provider
+        self._refresh_api_token = refresh_api_token
         self._delegated = bool(refresh_url and employee_id and provider)
 
         if self._delegated:
@@ -169,10 +171,15 @@ class OAuth2TokenManager:
             "provider": self._provider,
         }
 
+        headers: dict[str, str] = {}
+        if self._refresh_api_token:
+            headers["Authorization"] = f"Bearer {self._refresh_api_token}"
+
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 self._refresh_url,
                 json=payload,
+                headers=headers,
                 timeout=aiohttp.ClientTimeout(total=30),
             ) as resp:
                 if resp.status != 200:
