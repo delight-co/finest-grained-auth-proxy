@@ -246,6 +246,12 @@ def create_app(config: dict) -> web.Application:
         pass
 
     try:
+        from fgap.plugins.langfuse import LangfusePlugin
+        register_plugin(LangfusePlugin)
+    except (ImportError, ValueError):
+        pass
+
+    try:
         from fgap.plugins.http_proxy import HttpProxyPlugin
         register_plugin(HttpProxyPlugin)
     except (ImportError, ValueError):

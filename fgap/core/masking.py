@@ -12,6 +12,7 @@ SECRET_KEYS = frozenset({
     "client_secret",
     "refresh_token",
     "password",
+    "secret_key",
 })
 
 
