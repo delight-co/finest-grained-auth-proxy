@@ -7,7 +7,7 @@ ARG GH_VERSION=2.86.0
 ARG GOG_VERSION=0.11.0-delight.4
 ARG NOTION_CLI_VERSION=0.3.0
 
-RUN apt-get update && apt-get install -y --no-install-recommends git curl \
+RUN apt-get update && apt-get install -y --no-install-recommends git curl nodejs npm \
     && curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${TARGETARCH}.tar.gz" \
        | tar xz -C /tmp \
     && mv /tmp/gh_${GH_VERSION}_linux_${TARGETARCH}/bin/gh /usr/local/bin/gh \
@@ -18,6 +18,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends git curl \
     && curl -fsSL "https://github.com/4ier/notion-cli/releases/download/v${NOTION_CLI_VERSION}/notion-cli_${NOTION_CLI_VERSION}_linux_${TARGETARCH}.tar.gz" \
        | tar xz -C /tmp \
     && mv /tmp/notion /usr/local/bin/notion \
+    && npm install -g langfuse-cli \
     && rm -rf /tmp/gh_* /tmp/gogcli /tmp/notion-cli* /var/lib/apt/lists/*
 
 WORKDIR /app
