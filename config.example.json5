@@ -48,6 +48,19 @@
       ]
     },
 
+    // Langfuse: langfuse CLI (LLM tracing/prompts)
+    "langfuse": {
+      "credentials": [
+        {
+          "public_key": "pk-lf-YOUR_PUBLIC_KEY",
+          "secret_key": "sk-lf-YOUR_SECRET_KEY",
+          // Optional: override for self-hosted or US region
+          // "host": "https://us.cloud.langfuse.com",
+          "resources": ["*"]
+        }
+      ]
+    },
+
     // Notion: notion CLI (4ier/notion-cli)
     "notion": {
       "credentials": [
