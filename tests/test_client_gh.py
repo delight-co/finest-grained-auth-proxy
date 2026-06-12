@@ -103,6 +103,26 @@ class TestDetectRepoPositional:
     def test_not_owner_repo_shape(self):
         assert detect_repo_positional(["repo", "create", "bare-name"]) is None
 
+    def test_https_url(self):
+        args = ["repo", "view", "https://github.com/owner/repo"]
+        assert detect_repo_positional(args) == "owner/repo"
+
+    def test_https_url_dot_git(self):
+        args = ["repo", "view", "https://github.com/owner/repo.git"]
+        assert detect_repo_positional(args) == "owner/repo"
+
+    def test_ssh_url(self):
+        args = ["repo", "clone", "git@github.com:owner/repo.git"]
+        assert detect_repo_positional(args) == "owner/repo"
+
+    def test_host_owner_repo(self):
+        args = ["repo", "view", "github.com/owner/repo"]
+        assert detect_repo_positional(args) == "owner/repo"
+
+    def test_non_github_url(self):
+        args = ["repo", "view", "https://gitlab.com/owner/repo"]
+        assert detect_repo_positional(args) is None
+
 
 # =========================================================================
 # Pure logic: argument transformation
@@ -506,6 +526,20 @@ class TestRepoView:
         )
         args = state["requests"][0]["args"]
         assert args.count("cli/cli") == 1
+
+    async def test_url_positional_used_as_resource(self, mock_proxy):
+        """URL-form positionals select the credential for the named repo;
+        the URL itself passes through to gh, which accepts it upstream."""
+        server, state = mock_proxy
+        code = await run(
+            ["repo", "view", "https://github.com/cli/cli"],
+            _url(server),
+            _get_remote_url=_no_git(),
+        )
+        assert code == 0
+        req = state["requests"][0]
+        assert req["resource"] == "cli/cli"
+        assert req["args"] == ["repo", "view", "https://github.com/cli/cli"]
 
 
 # =========================================================================

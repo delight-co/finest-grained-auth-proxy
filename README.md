@@ -183,7 +183,6 @@ All commands require a resource (owner/repo) to select the right credential. Com
 
 | Blocked command | Reason |
 |----------------|--------|
-| `gh search *` | Cross-repo search; `--repo` flag gets consumed by resource detection |
 | `gh gist *` | User-scoped, no repo context |
 | `gh status` | User dashboard (cross-repo) |
 | `gh ssh-key *` / `gh gpg-key *` | User-scoped |
@@ -194,7 +193,10 @@ All commands require a resource (owner/repo) to select the right credential. Com
 Other limitations:
 
 - **Git LFS not supported**: Only basic git smart HTTP protocol (clone/fetch/push)
-- **Repo-scoped commands need context**: Either use `-R owner/repo`, or run from inside a git repo with a remote
+- **Repo-scoped commands need context**: Use `-R owner/repo` (or a repository positional for `repo` subcommands), or run from inside a git repo with a remote
+- **`gh search *` is single-repo**: The wrapper consumes `--repo` for credential selection and re-injects it as a single `-R`, so cross-repo searches (no `--repo`, or multiple `--repo` flags) collapse to one repository
+- **`repo` positionals must come right after the subcommand**: `gh repo view owner/repo --json name` selects the credential for `owner/repo`; with flags first (`gh repo view --json name owner/repo`) the wrapper falls back to the cwd's git remote for credential selection. `owner/repo` and URL forms (`https://github.com/owner/repo`, `git@github.com:owner/repo.git`) are accepted
+- **Bare `repo` subcommands other than `view`**: `gh repo view` without an argument targets the cwd's remote; other bare invocations (e.g. `gh repo clone` with no argument) aren't supported because the proxy server has no local git context
 
 ## License
 
