@@ -11,6 +11,26 @@ from fgap.plugins.base import Plugin
 
 logger = logging.getLogger(__name__)
 
+# gh subcommands that accept the -R/--repo flag for repository targeting.
+# Injecting -R into any other subcommand makes gh exit with "unknown
+# shorthand flag" before any API call — `api` targets via endpoint paths
+# and `repo` takes the repository as a positional argument instead.
+GH_REPO_FLAG_COMMANDS = frozenset({
+    "browse",
+    "cache",
+    "codespace",
+    "issue",
+    "label",
+    "pr",
+    "release",
+    "ruleset",
+    "run",
+    "search",
+    "secret",
+    "variable",
+    "workflow",
+})
+
 
 def find_plugin_for_tool(tool: str, plugins: dict[str, Plugin]) -> Plugin | None:
     for plugin in plugins.values():
@@ -90,10 +110,10 @@ def create_routes(config: dict, plugins: dict[str, Plugin]) -> web.Application:
                     return web.json_response(result)
 
             # Execute CLI subprocess
-            # gh needs -R to know the target repo (wrapper strips it for resource detection)
-            # api subcommand doesn't support -R — it uses endpoint paths instead
+            # The wrapper strips -R/--repo for resource detection, so
+            # re-inject it — but only for subcommands that accept the flag
             cli_args = args
-            if tool == "gh" and cmd != "api":
+            if tool == "gh" and cmd in GH_REPO_FLAG_COMMANDS:
                 cli_args = args + ["-R", resource]
             result = await execute_cli(tool, cli_args, credential["env"], timeout=cli_timeout, stdin_data=stdin_data)
             logger.info(
