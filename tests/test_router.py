@@ -219,6 +219,67 @@ class TestAuditLog:
         )
 
 
+class TestGhRepoFlagInjection:
+    """-R is re-injected only for gh subcommands that accept the flag."""
+
+    @pytest.fixture
+    def gh_calls(self, monkeypatch):
+        calls = []
+
+        async def fake_execute_cli(binary, args, env, timeout=None, stdin_data=None):
+            calls.append({"binary": binary, "args": args})
+            return {"exit_code": 0, "stdout": "", "stderr": ""}
+
+        monkeypatch.setattr("fgap.core.router.execute_cli", fake_execute_cli)
+        return calls
+
+    async def test_pr_gets_r_flag(self, dl_client, gh_calls):
+        resp = await dl_client.post("/cli", json={
+            "tool": "gh",
+            "args": ["pr", "list"],
+            "resource": "o/r",
+        })
+        assert resp.status == 200
+        assert gh_calls[0]["args"] == ["pr", "list", "-R", "o/r"]
+
+    async def test_issue_gets_r_flag(self, dl_client, gh_calls):
+        resp = await dl_client.post("/cli", json={
+            "tool": "gh",
+            "args": ["issue", "view", "1"],
+            "resource": "o/r",
+        })
+        assert resp.status == 200
+        assert gh_calls[0]["args"] == ["issue", "view", "1", "-R", "o/r"]
+
+    async def test_repo_does_not_get_r_flag(self, dl_client, gh_calls):
+        """repo subcommands take a positional argument, not -R."""
+        resp = await dl_client.post("/cli", json={
+            "tool": "gh",
+            "args": ["repo", "view", "o/r"],
+            "resource": "o/r",
+        })
+        assert resp.status == 200
+        assert gh_calls[0]["args"] == ["repo", "view", "o/r"]
+
+    async def test_api_does_not_get_r_flag(self, dl_client, gh_calls):
+        resp = await dl_client.post("/cli", json={
+            "tool": "gh",
+            "args": ["api", "repos/o/r"],
+            "resource": "o/r",
+        })
+        assert resp.status == 200
+        assert gh_calls[0]["args"] == ["api", "repos/o/r"]
+
+    async def test_unlisted_command_does_not_get_r_flag(self, dl_client, gh_calls):
+        resp = await dl_client.post("/cli", json={
+            "tool": "gh",
+            "args": ["gist", "list"],
+            "resource": "o/r",
+        })
+        assert resp.status == 200
+        assert gh_calls[0]["args"] == ["gist", "list"]
+
+
 # =========================================================================
 # /download endpoint
 # =========================================================================
