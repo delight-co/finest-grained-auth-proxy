@@ -27,7 +27,7 @@ from .base import ProxyClient
 _GITHUB_RE = re.compile(r"github\.com[:/]([^/]+)/([^/.]+)")
 _GIT_PROXY_RE = re.compile(r"/git/([^/]+)/([^/.]+)")
 _API_ENDPOINT_RE = re.compile(r"^/?repos/([^/]+)/([^/]+)")
-_OWNER_REPO_RE = re.compile(r"^[^/\s]+/[^/\s]+$")
+_OWNER_REPO_RE = re.compile(r"^[\w.-]+/[\w.-]+$")
 
 
 def parse_git_remote_url(url: str) -> str | None:
@@ -65,10 +65,13 @@ def detect_repo_positional(args: list[str]) -> str | None:
     """Extract owner/repo from a ``repo <subcommand> <repository>`` invocation.
 
     The ``repo`` subcommands take the target repository as a positional
-    argument rather than -R/--repo. Only the argument immediately after
-    the subcommand is considered, and only when it looks like
-    ``owner/repo``, so flag values elsewhere in the argument list are
-    never mistaken for the repository.
+    argument rather than -R/--repo. Accepts the same repository shapes
+    as gh itself: ``owner/repo`` and URL forms
+    (``https://github.com/owner/repo``, ``git@github.com:owner/repo.git``,
+    ``github.com/owner/repo``). Only the argument immediately after the
+    subcommand is considered, and only when it matches one of those
+    shapes, so flag values elsewhere in the argument list are never
+    mistaken for the repository.
     """
     if len(args) < 3 or args[0] != "repo":
         return None
@@ -77,7 +80,7 @@ def detect_repo_positional(args: list[str]) -> str | None:
         return None
     if _OWNER_REPO_RE.match(candidate):
         return candidate
-    return None
+    return parse_git_remote_url(candidate)
 
 
 async def get_git_remote_url(*, _run=None) -> str | None:
