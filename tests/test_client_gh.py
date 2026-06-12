@@ -4,6 +4,7 @@ import pytest
 from aiohttp import web
 
 from fgap.client.gh import (
+    detect_repo_positional,
     detect_resource_from_args,
     parse_api_endpoint,
     parse_git_remote_url,
@@ -72,6 +73,35 @@ class TestDetectResourceFromArgs:
 
     def test_mixed_args(self):
         assert detect_resource_from_args(["issue", "list", "-R", "o/r"]) == "o/r"
+
+
+class TestDetectRepoPositional:
+    def test_view_with_positional(self):
+        assert detect_repo_positional(["repo", "view", "owner/repo"]) == "owner/repo"
+
+    def test_positional_followed_by_flags(self):
+        args = ["repo", "view", "owner/repo", "--json", "visibility"]
+        assert detect_repo_positional(args) == "owner/repo"
+
+    def test_clone_with_positional(self):
+        assert detect_repo_positional(["repo", "clone", "owner/repo"]) == "owner/repo"
+
+    def test_no_positional(self):
+        assert detect_repo_positional(["repo", "view"]) is None
+
+    def test_flag_before_positional_not_detected(self):
+        """Only the argument right after the subcommand counts."""
+        assert detect_repo_positional(["repo", "view", "--json", "visibility"]) is None
+
+    def test_flag_value_not_mistaken_for_repo(self):
+        """A branch name like feat/x must not be picked up as a repository."""
+        assert detect_repo_positional(["repo", "view", "--branch", "feat/x"]) is None
+
+    def test_non_repo_command(self):
+        assert detect_repo_positional(["issue", "view", "owner/repo"]) is None
+
+    def test_not_owner_repo_shape(self):
+        assert detect_repo_positional(["repo", "create", "bare-name"]) is None
 
 
 # =========================================================================
@@ -410,6 +440,72 @@ class TestArgTransformation:
         )
         assert code == 1
         assert "File not found" in capsys.readouterr().err
+
+
+# =========================================================================
+# run(): repo view
+# =========================================================================
+
+
+class TestRepoView:
+    async def test_positional_used_as_resource(self, mock_proxy):
+        """repo view owner/repo works outside any git checkout."""
+        server, state = mock_proxy
+        code = await run(
+            ["repo", "view", "cli/cli"],
+            _url(server),
+            _get_remote_url=_no_git(),
+        )
+        assert code == 0
+        req = state["requests"][0]
+        assert req["resource"] == "cli/cli"
+        assert req["args"] == ["repo", "view", "cli/cli"]
+
+    async def test_no_positional_injects_remote_resource(self, mock_proxy):
+        """Bare repo view inside a checkout targets the remote's repo."""
+        server, state = mock_proxy
+        code = await run(
+            ["repo", "view"],
+            _url(server),
+            _get_remote_url=await _fake_remote("https://github.com/owner/repo.git"),
+        )
+        assert code == 0
+        req = state["requests"][0]
+        assert req["resource"] == "owner/repo"
+        assert req["args"] == ["repo", "view", "owner/repo"]
+
+    async def test_r_flag_converted_to_positional(self, mock_proxy):
+        server, state = mock_proxy
+        code = await run(
+            ["repo", "view", "-R", "o/r"],
+            _url(server),
+            _get_remote_url=_no_git(),
+        )
+        assert code == 0
+        req = state["requests"][0]
+        assert req["resource"] == "o/r"
+        assert req["args"] == ["repo", "view", "o/r"]
+
+    async def test_flags_preserved_after_injection(self, mock_proxy):
+        server, state = mock_proxy
+        code = await run(
+            ["repo", "view", "--json", "visibility"],
+            _url(server),
+            _get_remote_url=await _fake_remote("https://github.com/owner/repo.git"),
+        )
+        assert code == 0
+        args = state["requests"][0]["args"]
+        assert args == ["repo", "view", "owner/repo", "--json", "visibility"]
+
+    async def test_positional_not_duplicated(self, mock_proxy):
+        server, state = mock_proxy
+        await run(
+            ["repo", "view", "cli/cli", "--json", "visibility"],
+            _url(server),
+            _get_remote_url=_no_git(),
+        )
+        args = state["requests"][0]["args"]
+        assert args.count("cli/cli") == 1
 
 
 # =========================================================================

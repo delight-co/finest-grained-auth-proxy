@@ -27,6 +27,7 @@ from .base import ProxyClient
 _GITHUB_RE = re.compile(r"github\.com[:/]([^/]+)/([^/.]+)")
 _GIT_PROXY_RE = re.compile(r"/git/([^/]+)/([^/.]+)")
 _API_ENDPOINT_RE = re.compile(r"^/?repos/([^/]+)/([^/]+)")
+_OWNER_REPO_RE = re.compile(r"^[^/\s]+/[^/\s]+$")
 
 
 def parse_git_remote_url(url: str) -> str | None:
@@ -57,6 +58,25 @@ def detect_resource_from_args(args: list[str]) -> str | None:
             return arg[2:]
         if arg.startswith("--repo="):
             return arg[7:]
+    return None
+
+
+def detect_repo_positional(args: list[str]) -> str | None:
+    """Extract owner/repo from a ``repo <subcommand> <repository>`` invocation.
+
+    The ``repo`` subcommands take the target repository as a positional
+    argument rather than -R/--repo. Only the argument immediately after
+    the subcommand is considered, and only when it looks like
+    ``owner/repo``, so flag values elsewhere in the argument list are
+    never mistaken for the repository.
+    """
+    if len(args) < 3 or args[0] != "repo":
+        return None
+    candidate = args[2]
+    if candidate.startswith("-"):
+        return None
+    if _OWNER_REPO_RE.match(candidate):
+        return candidate
     return None
 
 
@@ -463,6 +483,7 @@ USAGE
 COMMANDS
   issue       Work with issues (via gh)
   pr          Work with pull requests (via gh)
+  repo        Work with repositories (via gh)
   api         Call GitHub REST API (via gh)
   discussion  Work with discussions (custom)
   sub-issue   Work with sub-issues (custom)
@@ -584,8 +605,11 @@ async def run(
         )
         return 1
 
-    # Detect resource: -R flag > api endpoint > git remote
+    # Detect resource: -R flag > repo positional > api endpoint > git remote
     resource = detect_resource_from_args(args)
+
+    if not resource and cmd == "repo":
+        resource = detect_repo_positional(args)
 
     if not resource and cmd == "api" and rest:
         resource = parse_api_endpoint(rest[0])
@@ -615,6 +639,19 @@ async def run(
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1
+
+    # repo view: gh resolves the target repository from a positional
+    # argument (the repo subcommands don't accept -R/--repo), so inject
+    # the detected resource when no repository was given explicitly
+    if (
+        len(clean_args) >= 2
+        and clean_args[0] == "repo"
+        and clean_args[1] == "view"
+        and resource
+        and (len(clean_args) == 2 or clean_args[2].startswith("-"))
+        and not _has_help_flag(clean_args)
+    ):
+        clean_args.insert(2, resource)
 
     # pr create: auto-inject --head if missing. Without --head the
     # server-side gh falls back to resolving the head branch from its
