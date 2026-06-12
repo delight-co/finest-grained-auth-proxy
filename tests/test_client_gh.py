@@ -444,16 +444,45 @@ class TestPrCreateHead:
         head_idx = args.index("--head")
         assert args[head_idx + 1] == "other:branch"
 
-    async def test_no_branch_no_injection(self, mock_proxy):
+    async def test_no_branch_fails_with_clear_error(self, mock_proxy, capsys):
+        """Outside a git checkout, fail client-side instead of sending a
+        head-less pr create that dies server-side with a misleading error."""
         server, state = mock_proxy
-        await run(
+        code = await run(
             ["pr", "create", "-R", "o/r"],
             _url(server),
             _get_remote_url=_no_git(),
             _get_branch=_no_git(),
         )
-        args = state["requests"][0]["args"]
-        assert "--head" not in args
+        assert code == 1
+        err = capsys.readouterr().err
+        assert "could not determine the head branch" in err
+        assert "--head" in err
+        assert state["requests"] == []
+
+    async def test_explicit_head_outside_checkout_reaches_proxy(self, mock_proxy):
+        """With --head given, pr create works outside any git checkout."""
+        server, state = mock_proxy
+        code = await run(
+            ["pr", "create", "--head", "o:branch", "--title", "T", "-R", "o/r"],
+            _url(server),
+            _get_remote_url=_no_git(),
+            _get_branch=_no_git(),
+        )
+        assert code == 0
+        assert len(state["requests"]) == 1
+
+    async def test_help_outside_checkout_not_blocked(self, mock_proxy):
+        """pr create --help must not be rejected by the head check."""
+        server, state = mock_proxy
+        code = await run(
+            ["pr", "create", "--help"],
+            _url(server),
+            _get_remote_url=_no_git(),
+            _get_branch=_no_git(),
+        )
+        assert code == 0
+        assert len(state["requests"]) == 1
 
 
 # =========================================================================

@@ -616,7 +616,10 @@ async def run(
         print(f"Error: {e}", file=sys.stderr)
         return 1
 
-    # pr create: auto-inject --head if missing
+    # pr create: auto-inject --head if missing. Without --head the
+    # server-side gh falls back to resolving the head branch from its
+    # own environment, which fails with a misleading GH_HOST error —
+    # fail here with an actionable message instead.
     if (
         len(clean_args) >= 2
         and clean_args[0] == "pr"
@@ -627,6 +630,16 @@ async def run(
         if branch:
             owner = resource.split("/")[0]
             clean_args.extend(["--head", f"{owner}:{branch}"])
+        elif not _has_help_flag(clean_args):
+            print(
+                "Error: could not determine the head branch: the current "
+                "directory is not inside a git repository (or HEAD is "
+                "detached).\n"
+                "Pass --head <owner>:<branch> explicitly, or run from a "
+                "checkout of the repository.",
+                file=sys.stderr,
+            )
+            return 1
 
     # pr checkout / co: handle client-side (git operations can't run on server)
     if (
