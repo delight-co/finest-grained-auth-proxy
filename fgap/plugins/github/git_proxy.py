@@ -68,16 +68,18 @@ async def _proxy_to_github(request, owner, repo, path, token, github_base):
             request.method, github_url,
             headers=headers, data=body,
         ) as resp:
-            response_body = await resp.read()
-            response_headers = {}
+            # Stream the upstream response through instead of buffering it:
+            # pack data for a large repository can be hundreds of MB, which
+            # OOM-kills the proxy if held in memory.
+            out = web.StreamResponse(status=resp.status)
             for h in _RESPONSE_HEADERS:
                 if h in resp.headers:
-                    response_headers[h] = resp.headers[h]
-            return web.Response(
-                body=response_body,
-                status=resp.status,
-                headers=response_headers,
-            )
+                    out.headers[h] = resp.headers[h]
+            await out.prepare(request)
+            async for chunk in resp.content.iter_chunked(64 * 1024):
+                await out.write(chunk)
+            await out.write_eof()
+            return out
     finally:
         if own_session:
             await session.close()
