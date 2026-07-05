@@ -8,7 +8,11 @@ from fgap.core.http import get_session
 
 logger = logging.getLogger(__name__)
 
-_FORWARDED_HEADERS = ("Content-Type", "Accept")
+# User-Agent must pass through: GitHub's LFS batch endpoint rejects
+# requests that present a plain git UA (routing-level 403), so the
+# git-lfs client has to be allowed to identify itself. The hardcoded
+# git UA below remains the fallback for clients that send none.
+_FORWARDED_HEADERS = ("Content-Type", "Accept", "User-Agent")
 _RESPONSE_HEADERS = ("Content-Type", "Cache-Control")
 
 
