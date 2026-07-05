@@ -30,6 +30,25 @@
           "resources": ["your-username/*"]
         },
 
+        // GitHub App: installation tokens minted automatically from the
+        // App's private key (short-lived, cached, auto-refreshed).
+        // Works where fine-grained PATs fall short — e.g. GitHub's Git LFS
+        // batch API rejects fine-grained PATs but accepts these.
+        {
+          "app_id": 123456,
+          // number at the end of the installation URL:
+          // github.com/organizations/YOUR_ORG/settings/installations/<id>
+          "installation_id": 12345678,
+          "private_key_path": "/path/to/github-app.private-key.pem",
+          // optional: narrow each minted token to the matched repository
+          // ("matched"), or to a fixed list; omit to cover the whole
+          // installation
+          "repositories": "matched",
+          // optional: cap permissions per token; omit for the App's defaults
+          "permissions": { "contents": "write" },
+          "resources": ["your-org/*"]
+        },
+
         // Classic PAT for external repos that need write access
         // (some orgs/repos don't accept fine-grained PATs from outside collaborators)
         {
