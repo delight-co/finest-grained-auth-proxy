@@ -83,9 +83,16 @@ async def _proxy_to_github(request, owner, repo, path, token, github_base):
                 if h in resp.headers:
                     out.headers[h] = resp.headers[h]
             await out.prepare(request)
-            async for chunk in resp.content.iter_chunked(64 * 1024):
-                await out.write(chunk)
-            await out.write_eof()
+            try:
+                async for chunk in resp.content.iter_chunked(64 * 1024):
+                    await out.write(chunk)
+                await out.write_eof()
+            except (ConnectionResetError,
+                    aiohttp.ClientConnectionResetError):
+                # the client hung up mid-stream — e.g. git-lfs aborts as
+                # soon as it sees an error status without draining the
+                # body. Their call, not our error; stay quiet.
+                pass
             return out
     finally:
         if own_session:
