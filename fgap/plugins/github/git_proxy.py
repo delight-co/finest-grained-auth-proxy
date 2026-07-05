@@ -12,7 +12,7 @@ _FORWARDED_HEADERS = ("Content-Type", "Accept")
 _RESPONSE_HEADERS = ("Content-Type", "Cache-Control")
 
 
-def make_routes(select_credential_fn, config):
+def make_routes(select_credential_fn, resolve_env_fn, config):
     """Create git smart HTTP proxy routes.
 
     Returns list of (method, path, handler) tuples.
@@ -29,9 +29,12 @@ def make_routes(select_credential_fn, config):
         if not credential:
             raise web.HTTPForbidden(text=f"No credential for git on {resource}")
 
-        token = credential["env"]["GH_TOKEN"]
+        env = await resolve_env_fn(credential)
+        if not env:
+            raise web.HTTPForbidden(text=f"No credential for git on {resource}")
+
         return await _proxy_to_github(
-            request, owner, repo, path, token, github_base,
+            request, owner, repo, path, env["GH_TOKEN"], github_base,
         )
 
     return [

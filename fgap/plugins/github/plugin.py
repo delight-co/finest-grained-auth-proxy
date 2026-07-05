@@ -10,6 +10,11 @@ _GITHUB_API_URL = "https://api.github.com"
 class GitHubPlugin(Plugin):
     """GitHub plugin: gh CLI execution and git smart HTTP proxy."""
 
+    def __init__(self):
+        from .app_token import AppTokenStore
+
+        self._app_tokens = AppTokenStore()
+
     @property
     def name(self) -> str:
         return "github"
@@ -23,10 +28,23 @@ class GitHubPlugin(Plugin):
 
         return select_credential(resource, config)
 
+    async def resolve_credential_env(self, credential: dict,
+                                     config: dict) -> dict | None:
+        app_cred = credential.get("app")
+        if app_cred is None:
+            return credential.get("env")
+        token = await self._app_tokens.get_token(
+            app_cred, credential["resource"],
+            api_base=config.get("_github_api_base_url", _GITHUB_API_URL))
+        return {"GH_TOKEN": token, "GH_HOST": "github.com"}
+
     def get_routes(self, config: dict) -> list[tuple[str, str, callable]]:
         from .git_proxy import make_routes
 
-        return make_routes(self.select_credential, config)
+        async def resolve_env(credential: dict) -> dict | None:
+            return await self.resolve_credential_env(credential, config)
+
+        return make_routes(self.select_credential, resolve_env, config)
 
     def get_commands(self) -> dict[str, callable]:
         from .commands.discussion import execute as execute_discussion
