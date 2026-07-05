@@ -226,7 +226,7 @@ All commands require a resource (owner/repo) to select the right credential. Com
 
 Other limitations:
 
-- **Git LFS not supported**: Only basic git smart HTTP protocol (clone/fetch/push)
+- **Git LFS needs an App credential**: the proxy forwards LFS batch requests, but GitHub rejects fine-grained PATs on the LFS endpoint — use a GitHub App credential (see Config Reference) for repositories with LFS objects
 - **Repo-scoped commands need context**: Use `-R owner/repo` (or a repository positional for `repo` subcommands), or run from inside a git repo with a remote
 - **`gh search *` is single-repo**: The wrapper consumes `--repo` for credential selection and re-injects it as a single `-R`, so cross-repo searches (no `--repo`, or multiple `--repo` flags) collapse to one repository
 - **`repo` positionals must come right after the subcommand**: `gh repo view owner/repo --json name` selects the credential for `owner/repo`; with flags first (`gh repo view --json name owner/repo`) the wrapper falls back to the cwd's git remote for credential selection. `owner/repo` and URL forms (`https://github.com/owner/repo`, `git@github.com:owner/repo.git`) are accepted
