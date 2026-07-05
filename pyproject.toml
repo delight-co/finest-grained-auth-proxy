@@ -6,6 +6,7 @@ requires-python = ">=3.11"
 dependencies = [
     "aiohttp>=3.9",
     "json5>=0.9",
+    "pyjwt[crypto]>=2.8",
 ]
 
 [project.optional-dependencies]

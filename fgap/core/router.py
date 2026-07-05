@@ -90,13 +90,18 @@ def create_routes(config: dict, plugins: dict[str, Plugin]) -> web.Application:
             if not await evaluate(tool, cmd, resource, config):
                 raise web.HTTPForbidden(text="Policy denied")
 
-            # Select credential
+            # Select credential, then resolve it into injectable env vars
+            # (App credentials mint a short-lived token here); downstream
+            # consumers always see the uniform {"env": {...}} shape
             plugin_config = config.get("plugins", {}).get(plugin.name, {})
             credential = plugin.select_credential(resource, plugin_config)
-            if not credential:
+            env = (await plugin.resolve_credential_env(credential, plugin_config)
+                   if credential else None)
+            if env is None:
                 if not is_help:
                     raise web.HTTPForbidden(text=f"No credential for {tool} on {resource}")
-                credential = {"env": {}}
+                env = {}
+            credential = {"env": env}
 
             # Try custom commands (with fallthrough)
             commands = plugin.get_commands()
@@ -173,12 +178,14 @@ def create_routes(config: dict, plugins: dict[str, Plugin]) -> web.Application:
 
             plugin_config = config.get("plugins", {}).get(plugin.name, {})
             credential = plugin.select_credential(resource, plugin_config)
-            if not credential:
+            env = (await plugin.resolve_credential_env(credential, plugin_config)
+                   if credential else None)
+            if not env:
                 raise web.HTTPForbidden(
                     text=f"No credential for {tool} on {resource}",
                 )
 
-            token = credential["env"]["GH_TOKEN"]
+            token = env["GH_TOKEN"]
             headers = {
                 "Authorization": f"Bearer {token}",
                 "Accept": "application/octet-stream",

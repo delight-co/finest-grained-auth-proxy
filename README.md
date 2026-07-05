@@ -133,6 +133,16 @@ gh issue edit 123 --old "typo" --new "fixed" -R owner/repo
         { "token": "github_pat_ORG",      "resources": ["your-org/*"] },
         { "token": "github_pat_PERSONAL", "resources": ["your-username/*"] },
         { "token": "ghp_CLASSIC",         "resources": ["some-org/repo"] },
+        // GitHub App credential: short-lived installation tokens are
+        // minted (and cached) automatically from the App's private key
+        {
+          "app_id": 123456,
+          "installation_id": 12345678,
+          "private_key_path": "/path/to/github-app.pem",
+          "repositories": "matched",              // optional narrowing
+          "permissions": { "contents": "write" }, // optional narrowing
+          "resources": ["your-org/*"]
+        },
         { "token": "github_pat_FALLBACK", "resources": ["*"] }
       ]
     },
@@ -158,6 +168,30 @@ gh issue edit 123 --old "typo" --new "fixed" -R owner/repo
 | `*` | Everything (fallback) |
 
 Credentials are evaluated top-to-bottom. First match wins.
+
+### GitHub App Credentials
+
+Instead of a PAT, a credential can reference a GitHub App. fgap signs a
+short-lived JWT with the App's private key, mints an installation access
+token (valid one hour), caches it, and re-mints before expiry — callers
+always see a fresh token, and the only long-lived secret is the key file.
+
+Why you might want this over a fine-grained PAT:
+
+- **Git LFS works.** GitHub's LFS batch API rejects fine-grained PATs (a
+  long-standing platform limitation); installation tokens are accepted.
+- **Narrowing at mint time.** `"repositories": "matched"` scopes every
+  minted token to the single repository that matched the credential's
+  resource patterns; a `"permissions"` map caps token permissions below
+  what the App is allowed. One App can serve many differently-scoped
+  credentials.
+- **No owner, no expiry surprises.** Tokens don't belong to a person and
+  the key doesn't expire; revocation and audit happen at the App level.
+
+Setup: create a GitHub App (only the permissions you need, webhook off),
+install it on the repositories you want to expose, note the App ID and
+the installation ID (the number at the end of the installation's URL),
+generate a private key, and point `private_key_path` at it.
 
 ## Endpoints
 
@@ -192,7 +226,7 @@ All commands require a resource (owner/repo) to select the right credential. Com
 
 Other limitations:
 
-- **Git LFS not supported**: Only basic git smart HTTP protocol (clone/fetch/push)
+- **Git LFS needs an App credential**: the proxy forwards LFS batch requests, but GitHub rejects fine-grained PATs on the LFS endpoint — use a GitHub App credential (see Config Reference) for repositories with LFS objects
 - **Repo-scoped commands need context**: Use `-R owner/repo` (or a repository positional for `repo` subcommands), or run from inside a git repo with a remote
 - **`gh search *` is single-repo**: The wrapper consumes `--repo` for credential selection and re-injects it as a single `-R`, so cross-repo searches (no `--repo`, or multiple `--repo` flags) collapse to one repository
 - **`repo` positionals must come right after the subcommand**: `gh repo view owner/repo --json name` selects the credential for `owner/repo`; with flags first (`gh repo view --json name owner/repo`) the wrapper falls back to the cwd's git remote for credential selection. `owner/repo` and URL forms (`https://github.com/owner/repo`, `git@github.com:owner/repo.git`) are accepted

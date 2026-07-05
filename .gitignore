@@ -4,3 +4,7 @@ __pycache__/
 build/
 dist/
 .venv/
+
+# local secrets (never commit): live config and GitHub App private keys
+config.json5
+*.pem

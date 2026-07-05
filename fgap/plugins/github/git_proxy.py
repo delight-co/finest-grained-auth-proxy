@@ -8,11 +8,15 @@ from fgap.core.http import get_session
 
 logger = logging.getLogger(__name__)
 
-_FORWARDED_HEADERS = ("Content-Type", "Accept")
+# User-Agent must pass through: GitHub's LFS batch endpoint rejects
+# requests that present a plain git UA (routing-level 403), so the
+# git-lfs client has to be allowed to identify itself. The hardcoded
+# git UA below remains the fallback for clients that send none.
+_FORWARDED_HEADERS = ("Content-Type", "Accept", "User-Agent")
 _RESPONSE_HEADERS = ("Content-Type", "Cache-Control")
 
 
-def make_routes(select_credential_fn, config):
+def make_routes(select_credential_fn, resolve_env_fn, config):
     """Create git smart HTTP proxy routes.
 
     Returns list of (method, path, handler) tuples.
@@ -29,9 +33,12 @@ def make_routes(select_credential_fn, config):
         if not credential:
             raise web.HTTPForbidden(text=f"No credential for git on {resource}")
 
-        token = credential["env"]["GH_TOKEN"]
+        env = await resolve_env_fn(credential)
+        if not env:
+            raise web.HTTPForbidden(text=f"No credential for git on {resource}")
+
         return await _proxy_to_github(
-            request, owner, repo, path, token, github_base,
+            request, owner, repo, path, env["GH_TOKEN"], github_base,
         )
 
     return [
@@ -76,9 +83,16 @@ async def _proxy_to_github(request, owner, repo, path, token, github_base):
                 if h in resp.headers:
                     out.headers[h] = resp.headers[h]
             await out.prepare(request)
-            async for chunk in resp.content.iter_chunked(64 * 1024):
-                await out.write(chunk)
-            await out.write_eof()
+            try:
+                async for chunk in resp.content.iter_chunked(64 * 1024):
+                    await out.write(chunk)
+                await out.write_eof()
+            except (ConnectionResetError,
+                    aiohttp.ClientConnectionResetError):
+                # the client hung up mid-stream — e.g. git-lfs aborts as
+                # soon as it sees an error status without draining the
+                # body. Their call, not our error; stay quiet.
+                pass
             return out
     finally:
         if own_session:

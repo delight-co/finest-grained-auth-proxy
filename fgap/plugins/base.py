@@ -49,6 +49,16 @@ class Plugin(ABC):
         """
         ...
 
+    async def resolve_credential_env(self, credential: dict,
+                                     config: dict) -> dict | None:
+        """Resolve a selected credential into env vars to inject.
+
+        The default returns the credential's static ``env``. Plugins whose
+        credentials need asynchronous work to become usable — e.g. minting
+        a short-lived token from a long-lived key — override this.
+        """
+        return credential.get("env")
+
     def get_routes(self, config: dict) -> list[tuple[str, str, callable]]:
         """Return custom HTTP routes: [(method, path_pattern, handler), ...].
 

@@ -129,3 +129,18 @@ class TestGitProxy:
     async def test_content_type_response_forwarded(self, git_proxy_client):
         resp = await git_proxy_client.get("/git/owner/repo.git/info/refs")
         assert resp.headers.get("Content-Type") == "application/x-git-upload-pack-advertisement"
+
+
+class TestUserAgentForwarding:
+    async def test_client_user_agent_passes_through(
+        self, git_proxy_client, mock_github_git_server,
+    ):
+        _, received = mock_github_git_server
+        await git_proxy_client.post(
+            "/git/owner/repo.git/info/lfs/objects/batch",
+            json={"operation": "upload"},
+            headers={"User-Agent": "git-lfs/3.3.0"},
+        )
+        # git-lfs must be able to identify itself: GitHub's LFS endpoint
+        # rejects batch calls that arrive with a plain git User-Agent
+        assert received[-1]["headers"]["User-Agent"] == "git-lfs/3.3.0"
