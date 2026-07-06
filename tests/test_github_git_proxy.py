@@ -1,3 +1,4 @@
+import asyncio
 import base64
 
 import pytest
@@ -11,7 +12,8 @@ from fgap.plugins.github import GitHubPlugin
 @pytest.fixture
 async def mock_github_git_server():
     """Mock GitHub git smart HTTP server."""
-    app = web.Application()
+    # default client_max_size (1MB) would 413 the streamed-body test
+    app = web.Application(client_max_size=32 * 1024 * 1024)
     received = []
 
     async def handle(request):
@@ -129,6 +131,102 @@ class TestGitProxy:
     async def test_content_type_response_forwarded(self, git_proxy_client):
         resp = await git_proxy_client.get("/git/owner/repo.git/info/refs")
         assert resp.headers.get("Content-Type") == "application/x-git-upload-pack-advertisement"
+
+
+class TestRequestBodyStreaming:
+    async def test_post_body_relayed_without_buffering(
+        self, git_proxy_client, mock_github_git_server,
+    ):
+        # the proxy must not hold the whole body in memory (issue #100):
+        # it relays the request stream, which reaches upstream chunked
+        _, received = mock_github_git_server
+        blob = b"x" * (8 * 1024 * 1024)
+        resp = await git_proxy_client.post(
+            "/git/owner/repo.git/git-receive-pack",
+            data=blob,
+            headers={"Content-Type": "application/x-git-receive-pack-request"},
+        )
+        assert resp.status == 200
+        assert received[0]["body"] == blob
+        assert received[0]["headers"].get("Transfer-Encoding") == "chunked"
+        assert "Content-Length" not in received[0]["headers"]
+
+
+class TestConcurrentTransferCap:
+    async def test_cap_bounds_concurrent_posts(self):
+        peak = 0
+        current = 0
+
+        async def handle(request):
+            nonlocal peak, current
+            current += 1
+            peak = max(peak, current)
+            await asyncio.sleep(0.05)
+            current -= 1
+            await request.read()
+            return web.Response(body=b"OK")
+
+        upstream = web.Application()
+        upstream.router.add_route("*", "/{path:.*}", handle)
+        async with TestServer(upstream) as server:
+            plugin = GitHubPlugin()
+            config = {
+                "plugins": {
+                    "github": {
+                        "credentials": [
+                            {"token": "t", "resources": ["*"]},
+                        ],
+                        "_github_base_url": str(server.make_url("")),
+                        "git_max_concurrent_transfers": 1,
+                    }
+                }
+            }
+            app = create_routes(config, {"github": plugin})
+            async with TestClient(TestServer(app)) as client:
+                results = await asyncio.gather(*(
+                    client.post("/git/owner/repo.git/git-upload-pack",
+                                data=b"want")
+                    for _ in range(3)
+                ))
+                assert all(r.status == 200 for r in results)
+                assert peak == 1  # transfers were serialized by the cap
+
+    async def test_get_not_gated(self):
+        # info/refs (GET) stays outside the cap: it is tiny and gating it
+        # would let queued packs starve ref advertisement
+        peak = 0
+        current = 0
+
+        async def handle(request):
+            nonlocal peak, current
+            current += 1
+            peak = max(peak, current)
+            await asyncio.sleep(0.05)
+            current -= 1
+            return web.Response(body=b"refs")
+
+        upstream = web.Application()
+        upstream.router.add_route("*", "/{path:.*}", handle)
+        async with TestServer(upstream) as server:
+            plugin = GitHubPlugin()
+            config = {
+                "plugins": {
+                    "github": {
+                        "credentials": [
+                            {"token": "t", "resources": ["*"]},
+                        ],
+                        "_github_base_url": str(server.make_url("")),
+                        "git_max_concurrent_transfers": 1,
+                    }
+                }
+            }
+            app = create_routes(config, {"github": plugin})
+            async with TestClient(TestServer(app)) as client:
+                await asyncio.gather(*(
+                    client.get("/git/owner/repo.git/info/refs")
+                    for _ in range(3)
+                ))
+                assert peak > 1  # GETs ran concurrently
 
 
 class TestUserAgentForwarding:
