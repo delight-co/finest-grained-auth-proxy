@@ -178,8 +178,7 @@ always see a fresh token, and the only long-lived secret is the key file.
 
 Why you might want this over a fine-grained PAT:
 
-- **Git LFS works.** GitHub's LFS batch API rejects fine-grained PATs (a
-  long-standing platform limitation); installation tokens are accepted.
+- **Git LFS, as a safety net.** GitHub's LFS batch API used to reject fine-grained PATs (a long-standing platform limitation) — that's why App credentials were added. We've recently observed fine-grained PATs working for LFS in some setups: the proxy forwards the batch request, GitHub returns 200, and LFS objects download via a signed S3 URL that bypasses the proxy entirely. We don't fully understand why this works now (possibly a platform change). If you hit LFS failures with a fine-grained PAT, an App credential is the known-reliable fix.
 - **Narrowing at mint time.** `"repositories": "matched"` scopes every
   minted token to the single repository that matched the credential's
   resource patterns; a `"permissions"` map caps token permissions below
@@ -226,7 +225,7 @@ All commands require a resource (owner/repo) to select the right credential. Com
 
 Other limitations:
 
-- **Git LFS needs an App credential**: the proxy forwards LFS batch requests, but GitHub rejects fine-grained PATs on the LFS endpoint — use a GitHub App credential (see Config Reference) for repositories with LFS objects
+- **Git LFS**: the proxy forwards LFS batch requests. Fine-grained PATs have been observed to work in some setups (see GitHub App Credentials above), but this isn't fully understood and may not hold everywhere. If you see LFS auth failures, switch to a GitHub App credential — that's the known-reliable path.
 - **Repo-scoped commands need context**: Use `-R owner/repo` (or a repository positional for `repo` subcommands), or run from inside a git repo with a remote
 - **`gh search *` is single-repo**: The wrapper consumes `--repo` for credential selection and re-injects it as a single `-R`, so cross-repo searches (no `--repo`, or multiple `--repo` flags) collapse to one repository
 - **`repo` positionals must come right after the subcommand**: `gh repo view owner/repo --json name` selects the credential for `owner/repo`; with flags first (`gh repo view --json name owner/repo`) the wrapper falls back to the cwd's git remote for credential selection. `owner/repo` and URL forms (`https://github.com/owner/repo`, `git@github.com:owner/repo.git`) are accepted
