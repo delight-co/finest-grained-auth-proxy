@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import logging
 
@@ -23,6 +24,14 @@ def make_routes(select_credential_fn, resolve_env_fn, config):
     """
     github_base = config.get("_github_base_url", "https://github.com")
 
+    # Optional cap on concurrent POST transfers (pack up/downloads). Both
+    # directions stream, so per-transfer memory is bounded, but many
+    # simultaneous pack transfers still add up — a cap turns a clone storm
+    # into queueing instead of memory pressure. 0 (default) = unlimited.
+    max_transfers = int(config.get("git_max_concurrent_transfers", 0) or 0)
+    transfer_gate = (asyncio.Semaphore(max_transfers)
+                     if max_transfers > 0 else None)
+
     async def handle_git(request: web.Request) -> web.Response:
         owner = request.match_info["owner"]
         repo = request.match_info["repo"]
@@ -37,6 +46,11 @@ def make_routes(select_credential_fn, resolve_env_fn, config):
         if not env:
             raise web.HTTPForbidden(text=f"No credential for git on {resource}")
 
+        if request.method == "POST" and transfer_gate is not None:
+            async with transfer_gate:
+                return await _proxy_to_github(
+                    request, owner, repo, path, env["GH_TOKEN"], github_base,
+                )
         return await _proxy_to_github(
             request, owner, repo, path, env["GH_TOKEN"], github_base,
         )
@@ -64,7 +78,11 @@ async def _proxy_to_github(request, owner, repo, path, token, github_base):
         if h in request.headers:
             headers[h] = request.headers[h]
 
-    body = await request.read() if request.method == "POST" else None
+    # Relay the request body as a stream instead of buffering it: a push's
+    # pack (or a client retrying with a large http.postBuffer) would
+    # otherwise sit in proxy memory in full. aiohttp sends an async
+    # iterable as a chunked upload, which git smart HTTP accepts.
+    body = request.content if request.method == "POST" else None
 
     session = get_session()
     own_session = session is None
