@@ -20,6 +20,7 @@ fgap-gh = "fgap.client.gh:main"
 fgap-gog = "fgap.client.gog:main"
 fgap-notion = "fgap.client.notion:main"
 fgap-langfuse = "fgap.client.langfuse:main"
+fgap-fly = "fgap.client.fly:main"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

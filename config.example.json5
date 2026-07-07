@@ -80,6 +80,33 @@
       ]
     },
 
+    // Fly.io: flyctl with per-app token injection. The resource is the
+    // Fly app name, so tokens can be scoped per app or app family.
+    // Commands needing the caller's working directory (deploy etc.)
+    // receive the app's token as a logged handout — Fly's API refuses
+    // to let tokens mint ephemeral sub-tokens (see fgap-fly --help).
+    // Requires flyctl on the proxy host.
+    "fly": {
+      "credentials": [
+        // Recommended: one deploy token per app. The `credential`
+        // handout gives the client exactly the token configured here,
+        // so per-app tokens keep every handout app-scoped.
+        {
+          // fly tokens create deploy -a my-app
+          "token": "FlyV1 fm2_YOUR_APP_TOKEN",
+          "resources": ["my-app"]
+        },
+        {
+          "token": "FlyV1 fm2_YOUR_OTHER_APP_TOKEN",
+          "resources": ["my-other-app"]
+        }
+        // A single org-wide token also works for proxy-side commands
+        // (fly tokens create org -o your-org, resources: ["*"]), but
+        // beware: local-context commands (deploy etc.) would then hand
+        // the org-wide token out to the client.
+      ]
+    },
+
     // Notion: notion CLI (4ier/notion-cli)
     "notion": {
       "credentials": [

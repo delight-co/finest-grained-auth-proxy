@@ -279,6 +279,12 @@ def create_app(config: dict) -> web.Application:
         pass
 
     try:
+        from fgap.plugins.fly import FlyPlugin
+        register_plugin(FlyPlugin)
+    except (ImportError, ValueError):
+        pass
+
+    try:
         from fgap.plugins.http_proxy import HttpProxyPlugin
         register_plugin(HttpProxyPlugin)
     except (ImportError, ValueError):
