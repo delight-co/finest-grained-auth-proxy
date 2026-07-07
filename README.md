@@ -26,7 +26,7 @@ CLI tools (gh, gog) / GitHub API / github.com (git)
 |--------|-----|-------------|
 | GitHub | `gh` | Issues, PRs, REST API, discussions, sub-issues, git clone/fetch/push |
 | Google | `gog` | Gmail, Calendar, Sheets, Docs, Drive, Contacts |
-| Fly.io | `fly` / `flyctl` | App management via proxy-side flyctl; deploy/logs/ssh via short-lived minted tokens |
+| Fly.io | `fly` / `flyctl` | App management via proxy-side flyctl; deploy/logs/ssh via logged per-app token handout |
 
 ## Quick Start
 

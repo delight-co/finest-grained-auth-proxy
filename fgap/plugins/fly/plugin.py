@@ -3,7 +3,7 @@ import aiohttp
 from fgap.core.http import get_session
 from fgap.core.masking import mask_value
 from fgap.plugins.base import Plugin
-from fgap.plugins.fly.commands import mint_command
+from fgap.plugins.fly.commands import credential_command
 
 _FLY_GRAPHQL_URL = "https://api.fly.io/graphql"
 
@@ -14,9 +14,10 @@ class FlyPlugin(Plugin):
     The resource is the Fly app name, so credentials can be scoped down
     to a single app. Commands that need the caller's working directory
     or a long-lived connection (deploy, logs, ssh, ...) cannot run
-    through the /cli round-trip; the client uses the ``mint`` custom
-    command to obtain a short-lived app-scoped deploy token and runs its
-    local flyctl with that instead (see fgap.client.fly).
+    through the /cli round-trip; the client uses the ``credential``
+    custom command to obtain the app's configured token and runs its
+    local flyctl with it (see fgap.client.fly, and commands.py for why
+    the handout cannot be ephemeral on Fly).
     """
 
     @property
@@ -33,7 +34,7 @@ class FlyPlugin(Plugin):
         return select_credential(resource, config)
 
     def get_commands(self) -> dict[str, callable]:
-        return {"mint": mint_command}
+        return {"credential": credential_command}
 
     async def health_check(
         self, config: dict, *, _api_url: str = _FLY_GRAPHQL_URL,

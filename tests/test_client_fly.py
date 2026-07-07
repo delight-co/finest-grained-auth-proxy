@@ -1,9 +1,4 @@
-from fgap.client.fly import (
-    DEFAULT_MINT_EXPIRY,
-    LOCAL_COMMANDS,
-    extract_app,
-    extract_expiry,
-)
+from fgap.client.fly import LOCAL_COMMANDS, extract_app
 
 
 class TestExtractApp:
@@ -46,24 +41,6 @@ class TestExtractApp:
     def test_nothing_found(self, tmp_path):
         assert extract_app(["status"], environ={},
                            toml_path=str(tmp_path / "fly.toml")) == ""
-
-
-class TestExtractExpiry:
-    def test_default(self):
-        args, expiry = extract_expiry(["deploy", "--remote-only"])
-        assert args == ["deploy", "--remote-only"]
-        assert expiry == DEFAULT_MINT_EXPIRY
-
-    def test_flag_is_stripped(self):
-        args, expiry = extract_expiry(
-            ["deploy", "--fgap-expiry", "30m", "--remote-only"])
-        assert args == ["deploy", "--remote-only"]
-        assert expiry == "30m"
-
-    def test_equals_form(self):
-        args, expiry = extract_expiry(["deploy", "--fgap-expiry=1h"])
-        assert args == ["deploy"]
-        assert expiry == "1h"
 
 
 class TestLocalCommands:

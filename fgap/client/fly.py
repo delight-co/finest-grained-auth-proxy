@@ -8,9 +8,10 @@ Two execution paths, chosen per subcommand:
 - Local commands (deploy, logs, ssh, ...) need this side's working
   directory (build context) or a connection the buffered /cli
   round-trip cannot carry (streaming, interactive shells, tunnels).
-  For these the wrapper asks the proxy to mint a short-lived
-  app-scoped deploy token and hands off to the local flyctl binary
-  with only that ephemeral token injected.
+  For these the wrapper requests the app's configured token from the
+  proxy (a logged handout — Fly's API refuses to let tokens mint
+  ephemeral sub-tokens, see the plugin) and hands off to the local
+  flyctl binary with it injected.
 
 Usage:
     fgap-fly status -a my-app
@@ -27,19 +28,15 @@ import sys
 
 from .base import ProxyClient
 
-# Commands handed off to the local flyctl (with a minted token) instead
-# of the proxy-side subprocess. The minted token is a *deploy* token
-# scoped to one app — commands needing broader scope (launch creating a
-# new app, org-level wireguard) will fail with a permission error and
+# Commands handed off to the local flyctl (with the handed-out token)
+# instead of the proxy-side subprocess. The token is an app-scoped
+# deploy token — commands needing broader scope (launch creating a new
+# app, org-level wireguard) will fail with a permission error and
 # belong on the proxy host itself.
 LOCAL_COMMANDS = frozenset({
     "deploy", "launch", "logs", "console", "ssh", "sftp",
     "proxy", "agent", "wireguard",
 })
-
-# Long enough to survive a remote build; short enough that a leaked
-# token is stale within the same working session.
-DEFAULT_MINT_EXPIRY = "15m"
 
 MAIN_HELP = """\
 fgap-fly - finest-grained auth proxy for flyctl
@@ -49,17 +46,15 @@ USAGE
 
 Arguments are forwarded to flyctl. API commands run on the proxy host
 with the credential injected there. Commands that need the local
-working directory or a live connection (deploy, logs, ssh, ...) run the
-local flyctl with a short-lived app-scoped token minted by the proxy.
+working directory or a live connection (deploy, logs, ssh, ...) run
+the local flyctl with the app's token handed out by the proxy (the
+handout is logged proxy-side).
 
 The target app is taken from -a/--app, then $FLY_APP, then ./fly.toml.
 
 COMMANDS
   auth        Show authentication status
   (everything else is a flyctl command)
-
-OPTIONS
-  --fgap-expiry <ttl>   TTL for the minted token (default 15m)
 
 EXAMPLES
   fgap-fly status -a my-app
@@ -105,25 +100,6 @@ def extract_app(args: list[str], *, environ: dict | None = None,
     return ""
 
 
-def extract_expiry(args: list[str]) -> tuple[list[str], str]:
-    """Strip the wrapper-level --fgap-expiry flag out of the args."""
-    out = []
-    expiry = DEFAULT_MINT_EXPIRY
-    i = 0
-    while i < len(args):
-        if args[i] == "--fgap-expiry" and i + 1 < len(args):
-            expiry = args[i + 1]
-            i += 2
-            continue
-        if args[i].startswith("--fgap-expiry="):
-            expiry = args[i].split("=", 1)[1]
-            i += 1
-            continue
-        out.append(args[i])
-        i += 1
-    return out, expiry
-
-
 def find_local_flyctl() -> str | None:
     """Locate the real flyctl, never this wrapper itself (the container
     may alias `fly` to fgap-fly)."""
@@ -147,11 +123,10 @@ async def run(args: list[str], proxy_url: str) -> int:
         async with ProxyClient(proxy_url) as client:
             return await _handle_auth(args[1:], client)
 
-    args, expiry = extract_expiry(args)
     app = extract_app(args)
 
     if cmd in LOCAL_COMMANDS and not _has_help_flag(args):
-        return await _run_local(args, app, expiry, proxy_url)
+        return await _run_local(args, app, proxy_url)
 
     # Longer timeout: remote-builder-adjacent commands can be slow.
     # Always name the binary "flyctl": hosts don't always have the "fly"
@@ -172,8 +147,7 @@ async def run(args: list[str], proxy_url: str) -> int:
     return result["exit_code"]
 
 
-async def _run_local(args: list[str], app: str, expiry: str,
-                     proxy_url: str) -> int:
+async def _run_local(args: list[str], app: str, proxy_url: str) -> int:
     if not app:
         print("Error: could not determine the Fly app "
               "(pass -a/--app, set FLY_APP, or run where fly.toml lives)",
@@ -187,13 +161,12 @@ async def _run_local(args: list[str], app: str, expiry: str,
 
     async with ProxyClient(proxy_url) as client:
         try:
-            result = await client.call_cli(
-                "flyctl", ["mint", "deploy", "--expiry", expiry], app)
+            result = await client.call_cli("flyctl", ["credential"], app)
         except (ConnectionError, ValueError) as e:
             print(f"Error: {e}", file=sys.stderr)
             return 1
     if result["exit_code"] != 0:
-        print(result["stderr"] or "Error: token mint failed",
+        print(result["stderr"] or "Error: credential handout failed",
               file=sys.stderr)
         return result["exit_code"] or 1
     token = result["stdout"].strip()

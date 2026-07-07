@@ -82,9 +82,10 @@
 
     // Fly.io: flyctl with per-app token injection. The resource is the
     // Fly app name, so tokens can be scoped per app or app family.
-    // Commands needing the caller's working directory (deploy etc.) get
-    // a short-lived deploy token minted on demand instead of the master
-    // token (see fgap-fly --help). Requires flyctl on the proxy host.
+    // Commands needing the caller's working directory (deploy etc.)
+    // receive the app's token as a logged handout — Fly's API refuses
+    // to let tokens mint ephemeral sub-tokens (see fgap-fly --help).
+    // Requires flyctl on the proxy host.
     "fly": {
       "credentials": [
         {

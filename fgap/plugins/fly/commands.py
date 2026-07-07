@@ -1,55 +1,36 @@
 """Custom commands for the Fly plugin.
 
-``mint`` is not a flyctl subcommand: it exists so a client on another
-filesystem can obtain a short-lived, app-scoped deploy token without ever
-seeing the long-lived credential. The proxy host runs
-``flyctl tokens create deploy -a <app> --expiry <ttl>`` with the master
-token injected and returns only the ephemeral token.
+``credential`` is not a flyctl subcommand: it hands the resource app's
+configured token to the caller for commands that must run client-side
+(deploy needs the caller's build context; ssh and log streaming need a
+live connection the buffered /cli round-trip cannot carry).
+
+An ephemeral handout would be strictly better, but Fly's API does not
+let tokens mint further tokens — measured 2026-07: the
+createLimitedAccessToken mutation is denied both to app deploy tokens
+and to live org tokens; only interactive user sessions may mint. So
+what crosses is the stored long-lived app-scoped token, and the
+*handout* is the audited event — subsequent use happens directly
+against Fly's API, outside the proxy's sight. Keeping even that off the
+client is the deploy-from-ref discussion (#104).
 """
 
-from fgap.core.executor import execute_cli
 
-DEFAULT_EXPIRY = "5m"
-MINT_KINDS = ("deploy",)
-
-
-def parse_mint_args(args: list[str]) -> tuple[str, str] | str:
-    """Parse ``mint`` arguments into (kind, expiry).
-
-    Returns an error message string on invalid input.
-    """
-    kind = args[0] if args else ""
-    if kind not in MINT_KINDS:
-        return (f"mint: unknown token kind {kind!r} "
-                f"(supported: {', '.join(MINT_KINDS)})")
-    expiry = DEFAULT_EXPIRY
-    rest = args[1:]
-    i = 0
-    while i < len(rest):
-        if rest[i] in ("--expiry", "-x"):
-            if i + 1 >= len(rest):
-                return f"mint: {rest[i]} requires a value (e.g. 5m, 1h)"
-            expiry = rest[i + 1]
-            i += 2
-            continue
-        return f"mint: unknown argument {rest[i]!r}"
-    return kind, expiry
+def parse_credential_args(args: list[str]) -> str | None:
+    """Validate ``credential`` arguments. Returns an error message or None."""
+    if args:
+        return f"credential: takes no arguments (got {args[0]!r})"
+    return None
 
 
-async def mint_command(args: list[str], resource: str, credential: dict,
-                       *, _execute=execute_cli) -> dict:
-    """Mint a short-lived deploy token for the resource app.
-
-    The token is scoped to one app and expires on its own, so handing it
-    back to the caller does not extend the trust boundary the way the
-    master token would.
-    """
-    parsed = parse_mint_args(args)
-    if isinstance(parsed, str):
-        return {"exit_code": 2, "stdout": "", "stderr": parsed}
-    _kind, expiry = parsed
-    return await _execute(
-        "flyctl",
-        ["tokens", "create", "deploy", "-a", resource, "--expiry", expiry],
-        credential["env"],
-    )
+async def credential_command(args: list[str], resource: str,
+                             credential: dict) -> dict:
+    """Hand out the resource app's configured token (logged by the router)."""
+    error = parse_credential_args(args)
+    if error:
+        return {"exit_code": 2, "stdout": "", "stderr": error}
+    token = (credential.get("env") or {}).get("FLY_API_TOKEN", "")
+    if not token:
+        return {"exit_code": 1, "stdout": "",
+                "stderr": "credential: no token configured for this app"}
+    return {"exit_code": 0, "stdout": token + "\n", "stderr": ""}

@@ -2,70 +2,43 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestServer
 
-from fgap.plugins.fly.commands import mint_command, parse_mint_args
+from fgap.plugins.fly.commands import credential_command, parse_credential_args
 from fgap.plugins.fly.plugin import FlyPlugin
 
-CRED = {"env": {"FLY_API_TOKEN": "FlyV1 fm2_master",
+CRED = {"env": {"FLY_API_TOKEN": "FlyV1 fm2_app_scoped",
                 "FLY_NO_UPDATE_CHECK": "1"}}
 
 
 # =========================================================================
-# mint: pure arg parsing
+# credential handout (Fly's API refuses token-minted sub-tokens, so the
+# stored app-scoped token itself is handed out; the handout is the
+# audited event)
 # =========================================================================
 
 
-class TestParseMintArgs:
-    def test_default_expiry(self):
-        assert parse_mint_args(["deploy"]) == ("deploy", "5m")
+class TestParseCredentialArgs:
+    def test_no_args_is_valid(self):
+        assert parse_credential_args([]) is None
 
-    def test_explicit_expiry(self):
-        assert parse_mint_args(["deploy", "--expiry", "15m"]) == ("deploy", "15m")
-        assert parse_mint_args(["deploy", "-x", "1h"]) == ("deploy", "1h")
-
-    def test_unknown_kind(self):
-        assert "unknown token kind" in parse_mint_args(["org"])
-        assert "unknown token kind" in parse_mint_args([])
-
-    def test_dangling_expiry_flag(self):
-        assert "requires a value" in parse_mint_args(["deploy", "--expiry"])
-
-    def test_unknown_argument(self):
-        assert "unknown argument" in parse_mint_args(["deploy", "--bogus"])
+    def test_rejects_arguments(self):
+        assert "takes no arguments" in parse_credential_args(["deploy"])
 
 
-# =========================================================================
-# mint: execution
-# =========================================================================
-
-
-class TestMintCommand:
-    async def test_mints_scoped_deploy_token(self):
-        calls = []
-
-        async def fake_execute(tool, args, env, **kw):
-            calls.append((tool, args, env))
-            return {"exit_code": 0, "stdout": "FlyV1 fm2_short\n", "stderr": ""}
-
-        result = await mint_command(["deploy", "--expiry", "10m"], "my-app",
-                                    CRED, _execute=fake_execute)
+class TestCredentialCommand:
+    async def test_hands_out_the_configured_token(self):
+        result = await credential_command([], "my-app", CRED)
         assert result["exit_code"] == 0
-        assert result["stdout"].strip() == "FlyV1 fm2_short"
-        tool, args, env = calls[0]
-        assert tool == "flyctl"
-        # scoped to the resource app, with the requested TTL, using the
-        # master credential's env
-        assert args == ["tokens", "create", "deploy",
-                        "-a", "my-app", "--expiry", "10m"]
-        assert env["FLY_API_TOKEN"] == "FlyV1 fm2_master"
+        assert result["stdout"].strip() == "FlyV1 fm2_app_scoped"
 
-    async def test_invalid_args_do_not_execute(self):
-        async def fake_execute(*a, **kw):  # pragma: no cover
-            raise AssertionError("must not execute")
-
-        result = await mint_command(["org"], "my-app", CRED,
-                                    _execute=fake_execute)
+    async def test_rejects_arguments(self):
+        result = await credential_command(["deploy"], "my-app", CRED)
         assert result["exit_code"] == 2
-        assert "unknown token kind" in result["stderr"]
+        assert "takes no arguments" in result["stderr"]
+
+    async def test_missing_token_fails_loudly(self):
+        result = await credential_command([], "my-app", {"env": {}})
+        assert result["exit_code"] == 1
+        assert "no token configured" in result["stderr"]
 
 
 # =========================================================================
@@ -99,7 +72,7 @@ class TestFlyPlugin:
         plugin = FlyPlugin()
         assert plugin.name == "fly"
         assert plugin.tools == ["fly", "flyctl"]
-        assert "mint" in plugin.get_commands()
+        assert "credential" in plugin.get_commands()
 
     async def test_health_valid_token(self, mock_fly_api):
         server, _state = mock_fly_api
