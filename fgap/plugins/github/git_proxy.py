@@ -32,6 +32,18 @@ def make_routes(select_credential_fn, resolve_env_fn, config):
     transfer_gate = (asyncio.Semaphore(max_transfers)
                      if max_transfers > 0 else None)
 
+    # Pack transfers are long-lived streams: cloning a large repository
+    # legitimately runs for minutes, so the shared session's `total`
+    # timeout (default 30s) must not apply — it fires mid-body and
+    # truncates any transfer that needs longer than that. Bound only
+    # connection setup and inter-read stalls instead: a transfer that
+    # keeps moving data is never cut off, a dead upstream still gets
+    # reaped after `git_transfer_idle_timeout` seconds of silence.
+    idle_timeout = float(config.get("git_transfer_idle_timeout", 60) or 60)
+    transfer_timeout = aiohttp.ClientTimeout(
+        total=None, sock_connect=30, sock_read=idle_timeout,
+    )
+
     async def handle_git(request: web.Request) -> web.Response:
         owner = request.match_info["owner"]
         repo = request.match_info["repo"]
@@ -50,9 +62,11 @@ def make_routes(select_credential_fn, resolve_env_fn, config):
             async with transfer_gate:
                 return await _proxy_to_github(
                     request, owner, repo, path, env["GH_TOKEN"], github_base,
+                    transfer_timeout,
                 )
         return await _proxy_to_github(
             request, owner, repo, path, env["GH_TOKEN"], github_base,
+            transfer_timeout,
         )
 
     return [
@@ -61,7 +75,8 @@ def make_routes(select_credential_fn, resolve_env_fn, config):
     ]
 
 
-async def _proxy_to_github(request, owner, repo, path, token, github_base):
+async def _proxy_to_github(request, owner, repo, path, token, github_base,
+                           transfer_timeout):
     github_url = f"{github_base}/{owner}/{repo}.git/{path}"
     if request.query_string:
         github_url += f"?{request.query_string}"
@@ -91,7 +106,7 @@ async def _proxy_to_github(request, owner, repo, path, token, github_base):
     try:
         async with session.request(
             request.method, github_url,
-            headers=headers, data=body,
+            headers=headers, data=body, timeout=transfer_timeout,
         ) as resp:
             # Stream the upstream response through instead of buffering it:
             # pack data for a large repository can be hundreds of MB, which
@@ -111,7 +126,28 @@ async def _proxy_to_github(request, owner, repo, path, token, github_base):
                 # soon as it sees an error status without draining the
                 # body. Their call, not our error; stay quiet.
                 pass
+            except asyncio.TimeoutError:
+                # Upstream stalled mid-body. The status line is already
+                # sent, so no error can be conveyed; close the connection
+                # without the chunked terminator so the client sees a
+                # truncated transfer rather than a complete one.
+                logger.warning(
+                    "git proxy: upstream stalled mid-transfer on %s %s/%s",
+                    request.method, owner, repo,
+                )
+                if request.transport is not None:
+                    request.transport.close()
             return out
+    except asyncio.TimeoutError:
+        # Upstream never started responding within the timeout — report
+        # it instead of surfacing as an opaque connection error.
+        logger.warning(
+            "git proxy: upstream timed out before responding on %s %s/%s",
+            request.method, owner, repo,
+        )
+        raise web.HTTPGatewayTimeout(
+            text=f"upstream git transfer timed out for {owner}/{repo}",
+        )
     finally:
         if own_session:
             await session.close()

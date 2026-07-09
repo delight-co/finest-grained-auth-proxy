@@ -1,6 +1,7 @@
 import asyncio
 import base64
 
+import aiohttp
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
@@ -227,6 +228,91 @@ class TestConcurrentTransferCap:
                     for _ in range(3)
                 ))
                 assert peak > 1  # GETs ran concurrently
+
+
+class TestTransferTimeout:
+    @staticmethod
+    def _make_config(server, **github_extra):
+        return {
+            # a total timeout this small would truncate the slow streams
+            # below if it applied to git transfers
+            "timeouts": {"http": 0.2},
+            "plugins": {
+                "github": {
+                    "credentials": [
+                        {"token": "t", "resources": ["*"]},
+                    ],
+                    "_github_base_url": str(server.make_url("")),
+                    **github_extra,
+                }
+            },
+        }
+
+    async def test_slow_transfer_outlives_session_total_timeout(self):
+        # a clone of a large repository streams for longer than the shared
+        # session's `total` timeout; the pack must arrive whole regardless
+        chunk = b"x" * 1024
+
+        async def handle(request):
+            resp = web.StreamResponse()
+            resp.headers["Content-Type"] = "application/x-git-upload-pack-result"
+            await resp.prepare(request)
+            for _ in range(10):  # ~0.5s total, > timeouts.http
+                await resp.write(chunk)
+                await asyncio.sleep(0.05)
+            await resp.write_eof()
+            return resp
+
+        upstream = web.Application()
+        upstream.router.add_route("*", "/{path:.*}", handle)
+        async with TestServer(upstream) as server:
+            app = create_routes(self._make_config(server), {"github": GitHubPlugin()})
+            async with TestClient(TestServer(app)) as client:
+                resp = await client.post(
+                    "/git/owner/repo.git/git-upload-pack", data=b"want",
+                )
+                assert resp.status == 200
+                assert await resp.read() == chunk * 10
+
+    async def test_unresponsive_upstream_returns_504(self):
+        async def handle(request):
+            await asyncio.sleep(0.5)  # > git_transfer_idle_timeout
+            return web.Response(body=b"too late")
+
+        upstream = web.Application()
+        upstream.router.add_route("*", "/{path:.*}", handle)
+        async with TestServer(upstream) as server:
+            config = self._make_config(server, git_transfer_idle_timeout=0.1)
+            app = create_routes(config, {"github": GitHubPlugin()})
+            async with TestClient(TestServer(app)) as client:
+                resp = await client.get("/git/owner/repo.git/info/refs")
+                assert resp.status == 504
+
+    async def test_midstream_stall_truncates_response(self, caplog):
+        # if upstream goes silent mid-body, the stream must end without the
+        # chunked terminator (a truncated pack, not a "complete" short one)
+        async def handle(request):
+            resp = web.StreamResponse()
+            await resp.prepare(request)
+            await resp.write(b"first")
+            await asyncio.sleep(0.5)  # > git_transfer_idle_timeout
+            await resp.write(b"never-sent")
+            await resp.write_eof()
+            return resp
+
+        upstream = web.Application()
+        upstream.router.add_route("*", "/{path:.*}", handle)
+        async with TestServer(upstream) as server:
+            config = self._make_config(server, git_transfer_idle_timeout=0.1)
+            app = create_routes(config, {"github": GitHubPlugin()})
+            async with TestClient(TestServer(app)) as client:
+                resp = await client.post(
+                    "/git/owner/repo.git/git-upload-pack", data=b"want",
+                )
+                assert resp.status == 200
+                with pytest.raises(aiohttp.ClientPayloadError):
+                    await resp.read()
+        assert "stalled mid-transfer" in caplog.text
 
 
 class TestUserAgentForwarding:
