@@ -36,8 +36,11 @@ class TestGoogleHealthCheck:
         assert r["valid"] is False
         assert "invalid keyring" in r["error"]
 
-    async def test_gog_not_installed(self):
-        """Without DI override, gog binary is not found in test env."""
+    async def test_gog_not_installed(self, monkeypatch, tmp_path):
+        """The default runner reports a missing gog binary as invalid."""
+        # point PATH at an empty dir: the lookup must fail even on hosts
+        # that do have gog installed
+        monkeypatch.setenv("PATH", str(tmp_path))
         plugin = GooglePlugin()
         config = {"credentials": [
             {"keyring_password": "test-password-123", "resources": ["*"]},
