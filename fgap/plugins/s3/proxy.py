@@ -60,6 +60,7 @@ DEFAULT_TRANSFER_TIMEOUT = 600
 # signature. Everything else is dropped — notably the incoming dummy
 # Authorization and signature headers.
 _FORWARDED_REQUEST_HEADERS = frozenset({
+    "accept-encoding",
     "content-type",
     "content-md5",
     "cache-control",
@@ -212,14 +213,16 @@ async def _proxy_request(
     region = cfg.get("region", "auto")
 
     # The signature covers the exact bytes of path and query, so build
-    # the upstream URL from the still-encoded raw path — decoding and
-    # re-encoding could change it (e.g. %2F in a key).
+    # the upstream URL from the still-encoded raw path and query.
+    # botocore signs the query string as given (no re-encoding) while S3
+    # endpoints canonicalize what arrives on the wire — the two agree
+    # only if the client's original (canonical-form) bytes are preserved.
     prefix = f"/s3/{service}"
-    raw_path = request.raw_path.split("?", 1)[0]
+    raw_path, _, raw_query = request.raw_path.partition("?")
     object_path = raw_path[len(prefix):] or "/"
     upstream_url = f"{endpoint}{object_path}"
-    if request.query_string:
-        upstream_url += f"?{request.query_string}"
+    if raw_query:
+        upstream_url += f"?{raw_query}"
 
     decoded_path = request.match_info.get("path", "")
     bucket, _, key = decoded_path.partition("/")
@@ -296,6 +299,10 @@ async def _proxy_request(
             headers=out_headers,
             data=body,
             allow_redirects=False,
+            # Never add headers the client didn't send: an auto-added
+            # Accept-Encoding makes the upstream compress responses the
+            # client never asked for (and can't always decode).
+            skip_auto_headers=("Accept-Encoding",),
         ) as resp:
             response = web.StreamResponse(status=resp.status)
             for name, value in resp.headers.items():

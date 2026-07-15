@@ -112,6 +112,7 @@ async def mock_upstream():
             "method": request.method,
             "path": request.path,
             "query": dict(request.query),
+            "raw_path_qs": request.raw_path,
             "headers": dict(request.headers),
             "body": body,
         })
@@ -165,8 +166,13 @@ async def proxy_app(mock_upstream):
 
 async def _request(proxy, method, path, **kwargs):
     import aiohttp
+    from yarl import URL
+
+    # encoded=True: send the path exactly as written, like a real S3
+    # client does — yarl would otherwise re-normalize percent-encoding.
+    url = URL(str(proxy.make_url("/")).rstrip("/") + path, encoded=True)
     async with aiohttp.ClientSession() as session:
-        async with session.request(method, proxy.make_url(path), **kwargs) as resp:
+        async with session.request(method, url, **kwargs) as resp:
             # resp.headers is case-insensitive; keep it that way
             return resp.status, await resp.read(), resp.headers
 
@@ -227,15 +233,41 @@ class TestS3Proxy:
         assert req["headers"]["x-amz-meta-origin"] == "workflow-7"
         assert "x-amz-meta-origin" in req["headers"]["Authorization"]
 
-    async def test_query_string_forwarded(self, proxy_app):
+    async def test_query_string_forwarded_byte_exact(self, proxy_app):
+        # botocore signs the query as given and S3 endpoints canonicalize
+        # the wire bytes; percent-encoding must survive untouched or
+        # signatures break (e.g. ListObjectsV2 with prefix=a%2Fb).
         proxy, state = proxy_app
         status, _, _ = await _request(
             proxy, "GET", "/s3/plain/media?list-type=2&prefix=team%2F",
         )
         assert status == 200
         req = state["requests"][-1]
-        assert req["query"]["list-type"] == "2"
+        assert req["raw_path_qs"] == "/media?list-type=2&prefix=team%2F"
         assert req["query"]["prefix"] == "team/"
+
+    async def test_accept_encoding_forwarded(self, proxy_app):
+        proxy, state = proxy_app
+        status, _, _ = await _request(
+            proxy, "GET", "/s3/plain/media/file.bin",
+            headers={"Accept-Encoding": "identity"},
+        )
+        assert status == 200
+        req = state["requests"][-1]
+        assert req["headers"]["Accept-Encoding"] == "identity"
+        assert "accept-encoding" in req["headers"]["Authorization"]
+
+    async def test_no_accept_encoding_injected(self, proxy_app):
+        # aiohttp must not auto-add Accept-Encoding: the upstream would
+        # compress responses the client never asked for. The client-side
+        # auto-header is skipped too so the proxy really receives none.
+        proxy, state = proxy_app
+        status, _, _ = await _request(
+            proxy, "GET", "/s3/plain/media/file.bin",
+            skip_auto_headers=("Accept-Encoding",),
+        )
+        assert status == 200
+        assert "Accept-Encoding" not in state["requests"][-1]["headers"]
 
     async def test_response_headers_forwarded_selectively(self, proxy_app):
         proxy, state = proxy_app
