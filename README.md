@@ -27,6 +27,7 @@ CLI tools (gh, gog) / GitHub API / github.com (git)
 | GitHub | `gh` | Issues, PRs, REST API, discussions, sub-issues, git clone/fetch/push |
 | Google | `gog` | Gmail, Calendar, Sheets, Docs, Drive, Contacts |
 | Fly.io | `fly` / `flyctl` | App management via proxy-side flyctl; deploy/logs/ssh via logged per-app token handout |
+| S3 | stock `aws` / `rclone` | S3-compatible storage (AWS S3, Cloudflare R2, MinIO) via SigV4 re-signing; bucket allow-list, deletion deny, immutable puts |
 
 ## Quick Start
 
@@ -118,6 +119,41 @@ gh sub-issue add 100 200 -R owner/repo
 gh issue edit 123 --old "typo" --new "fixed" -R owner/repo
 ```
 
+### S3-compatible storage
+
+No wrapper needed — point a stock S3 client at the proxy with dummy
+credentials. The proxy strips the dummy signature, enforces policy
+(bucket allow-list, deletion deny, immutable puts), re-signs with the
+real credentials, and streams to the upstream (AWS S3, Cloudflare R2,
+MinIO, ...).
+
+`~/.aws/credentials` (values are placeholders on purpose — the real
+keys live on the proxy side):
+
+```ini
+[media]
+aws_access_key_id = dummy
+aws_secret_access_key = dummy
+```
+
+`~/.aws/config`:
+
+```ini
+[profile media]
+region = auto
+endpoint_url = http://fgap-host:8766/s3/media
+request_checksum_calculation = when_required
+response_checksum_validation = when_required
+s3 =
+    addressing_style = path
+```
+
+```bash
+aws s3 cp video.mp4 s3://my-bucket/team/project/video.mp4 --profile media
+aws s3 ls s3://my-bucket/team/ --recursive --profile media
+aws s3 cp s3://my-bucket/team/project/video.mp4 ./video.mp4 --profile media
+```
+
 ## Config Reference
 
 ```json5
@@ -199,6 +235,8 @@ generate a private key, and point `private_key_path` at it.
 |----------|---------|
 | `POST /cli` | Execute a CLI command |
 | `GET /git/{owner}/{repo}.git/...` | Git smart HTTP proxy |
+| `ANY /proxy/{service}/...` | Generic HTTP forward proxy with credential injection |
+| `ANY /s3/{service}/{bucket}/{key}` | S3-compatible storage proxy with SigV4 re-signing |
 | `GET /health` | Lightweight health check (for Docker HEALTHCHECK) |
 | `GET /auth/status` | Credential validity check (for debugging) |
 
