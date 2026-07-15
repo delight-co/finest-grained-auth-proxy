@@ -191,6 +191,20 @@ aws s3 cp s3://my-bucket/team/project/video.mp4 ./video.mp4 --profile media
           "resources": ["*"]          // Resource patterns
         }
       ]
+    },
+    "s3": {
+      "services": {
+        "media": {
+          // S3-compatible endpoint (AWS S3, Cloudflare R2, MinIO, ...)
+          "endpoint": "https://ACCOUNT_ID.r2.cloudflarestorage.com",
+          "region": "auto",
+          "access_key_id": "...",
+          "secret_access_key": "...",
+          "buckets": ["my-bucket"],   // Optional: bucket allow-list
+          "deny": ["delete"],         // Optional: reject deletions
+          "immutable_puts": true      // Optional: never overwrite existing keys
+        }
+      }
     }
   }
 }
