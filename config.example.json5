@@ -149,6 +149,34 @@
       }
     },
 
+    // S3: proxy to S3-compatible storage (AWS S3, Cloudflare R2, MinIO)
+    // with SigV4 re-signing. The sandbox uses a stock S3 client (aws cli,
+    // rclone, boto3) with dummy credentials, pointed at
+    // $FGAP_PROXY_URL/s3/{service} (path-style addressing required).
+    "s3": {
+      "services": {
+        // "media": {
+        //   // S3 API endpoint (for R2: https://ACCOUNT_ID.r2.cloudflarestorage.com)
+        //   "endpoint": "https://ACCOUNT_ID.r2.cloudflarestorage.com",
+        //   "region": "auto",
+        //   "access_key_id": "YOUR_ACCESS_KEY_ID",
+        //   "secret_access_key": "YOUR_SECRET_ACCESS_KEY",
+        //   // Optional: allow-list of buckets (omit to allow all)
+        //   "buckets": ["my-bucket"],
+        //   // Optional: deny destructive operations.
+        //   // "delete" rejects DeleteObject/DeleteObjects/DeleteBucket
+        //   // (AbortMultipartUpload stays allowed).
+        //   "deny": ["delete"],
+        //   // Optional: inject If-None-Match: * into object-creating
+        //   // requests so existing keys can never be overwritten
+        //   // (requires conditional-write support upstream, e.g. R2/S3).
+        //   "immutable_puts": true,
+        //   // Optional: per-transfer timeout in seconds (default 600)
+        //   "timeout": 600
+        // }
+      }
+    },
+
     // Google: gog CLI (Google Workspace)
     "google": {
       "credentials": [

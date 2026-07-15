@@ -13,6 +13,7 @@ SECRET_KEYS = frozenset({
     "refresh_token",
     "password",
     "secret_key",
+    "secret_access_key",
 })
 
 

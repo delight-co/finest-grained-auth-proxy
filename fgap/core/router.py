@@ -290,5 +290,11 @@ def create_app(config: dict) -> web.Application:
     except (ImportError, ValueError):
         pass
 
+    try:
+        from fgap.plugins.s3 import S3Plugin
+        register_plugin(S3Plugin)
+    except (ImportError, ValueError):
+        pass
+
     plugins = discover_plugins(config)
     return create_routes(config, plugins)
