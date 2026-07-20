@@ -306,6 +306,12 @@ def create_app(config: dict) -> web.Application:
         pass
 
     try:
+        from fgap.plugins.aws import AwsPlugin
+        register_plugin(AwsPlugin)
+    except (ImportError, ValueError):
+        pass
+
+    try:
         from fgap.plugins.http_proxy import HttpProxyPlugin
         register_plugin(HttpProxyPlugin)
     except (ImportError, ValueError):
