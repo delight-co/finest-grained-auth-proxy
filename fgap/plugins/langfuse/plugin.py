@@ -23,6 +23,55 @@ class LangfusePlugin(Plugin):
 
         return select_credential(resource, config)
 
+    def check_policy(self, args: list[str], resource: str,
+                     config: dict) -> str | None:
+        from .policy import check_policy
+
+        return check_policy(args, resource, config)
+
+    def validate_config(self, config: dict) -> None:
+        """Strict schema: Langfuse credentials carry permissions.
+
+        Langfuse API keys are per-project (organization-scoped keys only
+        cover management routes, not trace data), so each entry is one
+        project's key pair plus the permissions granted through it.
+        ``permissions`` is required — an entry without an explicit grant
+        is an error, not an implicit full grant.
+        """
+        from fgap.core.config import ConfigError, check_keys
+
+        from .policy import KNOWN_PERMISSIONS
+
+        check_keys(
+            config, required={"credentials"}, context="plugins.langfuse",
+        )
+        for i, cred in enumerate(config["credentials"]):
+            ctx = f"plugins.langfuse credential {i}"
+            check_keys(
+                cred,
+                required={"public_key", "secret_key", "resources",
+                          "permissions"},
+                optional={"host"},
+                context=ctx,
+            )
+            resources = cred["resources"]
+            if not isinstance(resources, list) or not resources:
+                raise ConfigError(
+                    f"{ctx}: 'resources' must be a non-empty array"
+                )
+            permissions = cred["permissions"]
+            if not isinstance(permissions, list) or not permissions:
+                raise ConfigError(
+                    f"{ctx}: 'permissions' must be a non-empty array"
+                )
+            unknown = set(permissions) - KNOWN_PERMISSIONS
+            if unknown:
+                raise ConfigError(
+                    f"{ctx}: unknown permission(s): "
+                    f"{', '.join(sorted(unknown))} "
+                    f"(known: {', '.join(sorted(KNOWN_PERMISSIONS))})"
+                )
+
     async def health_check(
         self, config: dict, *, _api_url: str | None = None,
     ) -> list[dict]:
@@ -37,6 +86,7 @@ class LangfusePlugin(Plugin):
                 "masked_public_key": mask_value(cred.get("public_key", "")),
                 "host": host,
                 "resources": cred.get("resources", []),
+                "permissions": cred.get("permissions", []),
             }
             try:
                 api_url = _api_url or host
