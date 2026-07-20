@@ -125,6 +125,28 @@
       ]
     },
 
+    // Generic HTTP forward proxy (no CLI wrapper — sandbox uses curl):
+    //     curl $FGAP_PROXY_URL/proxy/<service>/<path>
+    //
+    // Auth modes: "bearer" / "basic" / "header" (arbitrary header name,
+    // e.g. for x-api-key-style APIs including MCP servers) / "oauth2".
+    // Request/response header allowlists include the MCP-required headers
+    // (MCP-Protocol-Version, Mcp-Session-Id, Origin, ...) so the proxy
+    // passes Streamable HTTP JSON-only MCP traffic through unmodified.
+    "http_proxy": {
+      "services": {
+        "some_mcp": {
+          "upstream": "https://mcp.example.com",
+          "auth": "header",
+          "header_name": "x-api-key",  // required when auth = "header"
+          "credentials": [
+            { "token": "sk_YOUR_KEY", "resources": ["*"] }
+          ]
+        }
+        // See DESIGN.md / plugin.py docstring for bearer / basic / oauth2 examples
+      }
+    },
+
     // Fly.io: flyctl with per-app token injection. The resource is the
     // Fly app name, so tokens can be scoped per app or app family.
     // Commands needing the caller's working directory (deploy etc.)

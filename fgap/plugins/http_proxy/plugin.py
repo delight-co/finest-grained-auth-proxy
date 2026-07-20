@@ -3,6 +3,16 @@
 Proxies HTTP requests to upstream APIs with credential injection.
 No CLI binary needed — sandbox uses curl directly.
 
+Auth modes:
+
+- ``bearer``: ``Authorization: Bearer <token>``
+- ``basic``: ``Authorization: Basic <base64>``
+- ``header``: inject the token under a caller-chosen header name
+  (``header_name`` required) — for APIs like ``x-api-key`` that put the
+  credential outside ``Authorization``. This is what makes the plugin
+  usable in front of MCP servers that authenticate that way.
+- ``oauth2``: automatic refresh via OAuth2TokenManager.
+
 Config example::
 
     "http_proxy": {
@@ -13,6 +23,14 @@ Config example::
                 "credentials": [
                     {"token": "access_token_xxx", "resources": ["*"]}
                 ]
+            },
+            "some_mcp": {
+                "upstream": "https://mcp.example.com",
+                "auth": "header",
+                "header_name": "x-api-key",
+                "credentials": [
+                    {"token": "sk_xxx", "resources": ["*"]}
+                ]
             }
         }
     }
@@ -20,6 +38,10 @@ Config example::
 Sandbox usage::
 
     curl $FGAP_PROXY_URL/proxy/freee/api/1/deals?company_id=XXX
+    curl -X POST $FGAP_PROXY_URL/proxy/some_mcp/mcp \\
+      -H 'Content-Type: application/json' \\
+      -H 'Accept: application/json, text/event-stream' \\
+      -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
 """
 
 import logging
