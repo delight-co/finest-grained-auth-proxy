@@ -97,6 +97,34 @@
       ]
     },
 
+    // AWS: read-only aws CLI (observability: logs / ecs / cloudwatch / ecr)
+    //
+    // The plugin enforces a curated read-only allowlist per service:
+    // write operations, secret-returning reads (ssm, secretsmanager),
+    // credential minting (ecr get-login-password) and long-running
+    // streams (--follow) are denied at the proxy. Pair the credential
+    // with a read-only IAM principal (aws-readonly-policy.example.json)
+    // so the guarantee holds in two independent layers.
+    //
+    // The grant is account-wide per service, not per workload: if
+    // multiple workloads share the account, reads span all of them.
+    "aws": {
+      "credentials": [
+        {
+          // Proxy-host AWS profile (resolved by the host's ~/.aws,
+          // SSO works). Alternative: "access_key_id" + "secret_access_key".
+          "profile": "my-readonly-profile",
+          "region": "us-east-1",
+          // Account alias the client selects with --account /
+          // FGAP_AWS_ACCOUNT (no default).
+          "resources": ["my-account"],
+          // Services opted in for this entry (subset of the supported
+          // read-only set: cloudwatch, ecr, ecs, logs).
+          "services": ["logs", "ecs", "cloudwatch", "ecr"]
+        }
+      ]
+    },
+
     // Fly.io: flyctl with per-app token injection. The resource is the
     // Fly app name, so tokens can be scoped per app or app family.
     // Commands needing the caller's working directory (deploy etc.)
