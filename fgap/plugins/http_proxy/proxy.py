@@ -19,16 +19,24 @@ from fgap.plugins.base import match_resource
 
 logger = logging.getLogger(__name__)
 
-# Headers to forward from client request to upstream
+# Headers to forward from client request to upstream. MCP-Protocol-Version,
+# Mcp-Session-Id, and Origin are required by the MCP Streamable HTTP
+# transport (spec 2025-03-26); they are harmless for non-MCP upstreams.
 _FORWARDED_REQUEST_HEADERS = (
     "Content-Type", "Accept", "Accept-Encoding", "Accept-Language",
+    "MCP-Protocol-Version", "Mcp-Session-Id", "Origin",
 )
 
-# Headers to forward from upstream response to client
+# Headers to forward from upstream response to client. Mcp-Session-Id
+# and MCP-Protocol-Version are how a stateful MCP server hands out a
+# session on initialize and echoes the negotiated version.
 _FORWARDED_RESPONSE_HEADERS = (
     "Content-Type", "Content-Length", "Cache-Control",
     "X-Request-Id",
+    "Mcp-Session-Id", "MCP-Protocol-Version",
 )
+
+_SUPPORTED_AUTH = frozenset({"bearer", "basic", "header", "oauth2"})
 
 
 def _select_token(resource: str, service_config: dict) -> str | None:
@@ -54,6 +62,22 @@ def make_routes(
     services = config.get("services", {})
     if not services:
         return []
+
+    # Fail fast on service misconfiguration: an unknown auth mode or a
+    # header-auth service missing its header_name would only surface at
+    # request time otherwise, and by then the credential is unusable.
+    for name, svc in services.items():
+        auth = svc.get("auth", "bearer")
+        if auth not in _SUPPORTED_AUTH:
+            raise ValueError(
+                f"http_proxy service '{name}': unknown auth mode "
+                f"'{auth}' (supported: {', '.join(sorted(_SUPPORTED_AUTH))})"
+            )
+        if auth == "header" and not svc.get("header_name"):
+            raise ValueError(
+                f"http_proxy service '{name}': auth 'header' requires "
+                f"'header_name' (name of the header to inject the token as)"
+            )
 
     # Initialize OAuth2 token managers for services with auth=oauth2
     token_managers = {}
@@ -112,6 +136,7 @@ def make_routes(
         upstream = service_config["upstream"].rstrip("/")
         auth_type = service_config.get("auth", "bearer")
         extra_headers = service_config.get("extra_headers", {})
+        header_name = service_config.get("header_name")
 
         # Get token based on auth type
         if auth_type == "oauth2" and service in token_managers:
@@ -129,6 +154,7 @@ def make_routes(
 
         resp = await _proxy_request(
             request, upstream, path, token, effective_auth, extra_headers,
+            header_name=header_name,
         )
 
         # Auto-retry on 401 for OAuth2 services
@@ -159,6 +185,8 @@ async def _proxy_request(
     token: str,
     auth_type: str,
     extra_headers: dict,
+    *,
+    header_name: str | None = None,
 ) -> web.Response:
     upstream_url = f"{upstream}/{path}"
     if request.query_string:
@@ -171,17 +199,21 @@ async def _proxy_request(
         if filtered_qs:
             upstream_url += f"?{filtered_qs}"
 
-    # Build auth header
-    if auth_type == "basic":
+    # Build the credential header. "header" mode injects the token under
+    # a caller-chosen header name (e.g. "x-api-key"), leaving Authorization
+    # untouched; bearer/basic keep the existing Authorization behavior.
+    headers: dict[str, str] = {"User-Agent": "fgap"}
+    if auth_type == "header":
+        # Startup validation guarantees header_name is present here.
+        headers[header_name] = token  # type: ignore[index]
+    elif auth_type == "basic":
         import base64
-        auth_header = f"Basic {base64.b64encode(token.encode()).decode()}"
+        headers["Authorization"] = (
+            f"Basic {base64.b64encode(token.encode()).decode()}"
+        )
     else:
-        auth_header = f"Bearer {token}"
+        headers["Authorization"] = f"Bearer {token}"
 
-    headers = {
-        "Authorization": auth_header,
-        "User-Agent": "fgap",
-    }
     headers.update(extra_headers)
 
     for h in _FORWARDED_REQUEST_HEADERS:
