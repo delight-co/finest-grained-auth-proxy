@@ -27,6 +27,7 @@ CLI tools (gh, gog) / GitHub API / github.com (git)
 | GitHub | `gh` | Issues, PRs, REST API, discussions, sub-issues, git clone/fetch/push |
 | Google | `gog` | Gmail, Calendar, Sheets, Docs, Drive, Contacts |
 | Fly.io | `fly` / `flyctl` | App management via proxy-side flyctl; deploy/logs/ssh via logged per-app token handout |
+| AWS | `fgap-aws` | Read-only observability (CloudWatch logs / metrics, ECS, ECR) via a curated allowlist; secret-bearing reads and credential minting denied |
 | S3 | stock `aws` / `rclone` | S3-compatible storage (AWS S3, Cloudflare R2, MinIO) via SigV4 re-signing; bucket allow-list, deletion deny, immutable puts |
 
 ## Quick Start
@@ -119,6 +120,25 @@ gh sub-issue add 100 200 -R owner/repo
 gh issue edit 123 --old "typo" --new "fixed" -R owner/repo
 ```
 
+### AWS read-only observability
+
+```bash
+fgap-aws auth list                                             # accounts, identity, granted services
+fgap-aws --account my-account logs tail /my/log-group --since 10m
+fgap-aws --account my-account ecs describe-services --cluster c --services s
+fgap-aws --account my-account cloudwatch list-metrics --namespace ECS/ContainerInsights
+```
+
+Only a curated read-only set per service is allowed (`logs`, `ecs`,
+`cloudwatch`, `ecr`). Denials name the reason: write operations,
+unsupported services (`ssm`, `secretsmanager`, ...), credential minting
+(`ecr get-login-password`), `--follow` streams, and `--profile` /
+`--endpoint-url` / `--debug` are all rejected at the proxy. The grant is
+account-wide per service — if multiple workloads share the account,
+reads span all of them. Pair the proxy-side credential with a read-only
+IAM principal ([aws-readonly-policy.example.json](./aws-readonly-policy.example.json))
+so the guarantee holds in two independent layers.
+
 ### S3-compatible storage
 
 No wrapper needed — point a stock S3 client at the proxy with dummy
@@ -189,6 +209,19 @@ aws s3 cp s3://my-bucket/team/project/video.mp4 ./video.mp4 --profile media
           "keyring_password": "...",  // gog keyring password
           "account": "user@...",      // Optional: Google account
           "resources": ["*"]          // Resource patterns
+        }
+      ]
+    },
+    "aws": {
+      // Read-only aws CLI. Curated allowlist per service; write ops,
+      // secret-returning reads and credential minting are denied.
+      // Pair with a read-only principal: aws-readonly-policy.example.json
+      "credentials": [
+        {
+          "profile": "my-readonly-profile",  // or access_key_id + secret_access_key
+          "region": "us-east-1",
+          "resources": ["my-account"],       // account alias for --account
+          "services": ["logs", "ecs", "cloudwatch", "ecr"]
         }
       ]
     },

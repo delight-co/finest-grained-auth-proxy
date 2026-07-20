@@ -1,0 +1,41 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadOnlyObservability",
+      "Effect": "Allow",
+      "Action": [
+        "logs:Describe*",
+        "logs:Get*",
+        "logs:FilterLogEvents",
+        "logs:StartQuery",
+        "logs:StopQuery",
+        "ecs:Describe*",
+        "ecs:List*",
+        "cloudwatch:GetMetricData",
+        "cloudwatch:GetMetricStatistics",
+        "cloudwatch:ListMetrics",
+        "cloudwatch:DescribeAlarms",
+        "ecr:DescribeRepositories",
+        "ecr:DescribeImages",
+        "ecr:ListImages",
+        "sts:GetCallerIdentity"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "DenySecretBearingReads",
+      "Effect": "Deny",
+      "Action": [
+        "ssm:GetParameter*",
+        "secretsmanager:GetSecretValue",
+        "kms:Decrypt",
+        "ecr:GetAuthorizationToken",
+        "ecr:GetDownloadUrlForLayer",
+        "ecr:BatchGetImage",
+        "lambda:GetFunction"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
