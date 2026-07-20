@@ -3,10 +3,10 @@ import logging
 import aiohttp
 from aiohttp import web
 
+from fgap.core.config import ConfigError
 from fgap.core.credential import select_credential
 from fgap.core.executor import execute_cli
 from fgap.core.http import close_session, set_session
-from fgap.core.policy import evaluate
 from fgap.plugins.base import Plugin
 
 logger = logging.getLogger(__name__)
@@ -44,6 +44,20 @@ def create_routes(config: dict, plugins: dict[str, Plugin]) -> web.Application:
 
     Accepts plugins directly — use this in tests.
     """
+    # Plugin-owned config validation, fail-fast at startup. A config
+    # section for a plugin that is not loaded is an error (the grants
+    # it describes would silently not be enforced otherwise).
+    plugin_sections = config.get("plugins", {})
+    for section_name in plugin_sections:
+        if section_name not in plugins:
+            raise ConfigError(
+                f"Config has a 'plugins.{section_name}' section but no such "
+                f"plugin is loaded"
+            )
+    for name, plugin in plugins.items():
+        if name in plugin_sections:
+            plugin.validate_config(plugin_sections[name])
+
     app = web.Application(client_max_size=0)
 
     # Shared HTTP session lifecycle
@@ -86,14 +100,21 @@ def create_routes(config: dict, plugins: dict[str, Plugin]) -> web.Application:
             if not plugin:
                 raise web.HTTPBadRequest(text=f"No plugin handles tool: {tool}")
 
-            # Policy check (allow-all stub)
-            if not await evaluate(tool, cmd, resource, config):
-                raise web.HTTPForbidden(text="Policy denied")
+            plugin_config = config.get("plugins", {}).get(plugin.name, {})
+
+            # Policy check: the plugin owns the judgment (service-specific
+            # grammar), the config owns the grants, this is the choke point
+            deny_reason = plugin.check_policy(args, resource, plugin_config)
+            if deny_reason is not None:
+                logger.info(
+                    "cli tool=%s resource=%s policy denied: %s",
+                    tool, resource, deny_reason,
+                )
+                raise web.HTTPForbidden(text=f"Policy denied: {deny_reason}")
 
             # Select credential, then resolve it into injectable env vars
             # (App credentials mint a short-lived token here); downstream
             # consumers always see the uniform {"env": {...}} shape
-            plugin_config = config.get("plugins", {}).get(plugin.name, {})
             credential = plugin.select_credential(resource, plugin_config)
             env = (await plugin.resolve_credential_env(credential, plugin_config)
                    if credential else None)

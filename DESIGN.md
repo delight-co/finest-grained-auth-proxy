@@ -155,8 +155,7 @@ finest-grained-auth-proxy/
 │   │   ├── config.py                # Config loading + validation (JSON5, chmod 600)
 │   │   ├── credential.py            # Credential selection engine (delegates to plugins)
 │   │   ├── executor.py              # CLI execution engine (async subprocess)
-│   │   ├── router.py                # HTTP request routing + /cli handler + /auth/status handler
-│   │   └── policy.py                # Policy evaluation (allow all, extension point)
+│   │   └── router.py                # HTTP request routing + /cli handler + /auth/status handler
 │   │
 │   ├── plugins/
 │   │   ├── __init__.py              # Plugin registry + discovery
@@ -415,13 +414,13 @@ async def handle_cli(request: web.Request) -> web.Response:
     return web.json_response(result)
 ```
 
-**policy.py**: Stub for future use:
-
-```python
-async def evaluate(tool: str, action: str, resource: str, config: dict) -> bool:
-    """Always returns True. Extension point for future policy enforcement."""
-    return True
-```
+**Policy**: plugin-owned. The router calls `Plugin.check_policy(args,
+resource, plugin_config)` before credential selection and turns a deny
+reason into HTTP 403. Core provides the choke point and generic helpers
+(`match_resource`, `check_keys`); each plugin defines its own permission
+grammar and validates it in `Plugin.validate_config` at startup (the
+langfuse plugin's per-entry `permissions` is the first implementation;
+the s3 plugin's `_check_policy` predates the hook and can migrate to it).
 
 ### Client (Thin Wrapper) Design
 

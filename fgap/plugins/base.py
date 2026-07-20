@@ -77,6 +77,41 @@ class Plugin(ABC):
         """
         return {}
 
+    def check_policy(self, args: list[str], resource: str,
+                     config: dict) -> str | None:
+        """Decide whether this invocation is allowed.
+
+        Called by the router before credential selection. Responsibilities
+        are split three ways: the plugin owns the judgment logic (how to
+        read args for this service — permission grammar and granularity
+        are service-specific), the config owns the concrete grants, and
+        the router owns the choke point (a deny becomes HTTP 403 with the
+        returned reason).
+
+        Args:
+            args: Full CLI argv as received from the client.
+            resource: Resource identifier the client is targeting.
+            config: Plugin-specific config section.
+
+        Returns:
+            None to allow, or a human-readable deny reason.
+        """
+        return None
+
+    def validate_config(self, config: dict) -> None:
+        """Validate this plugin's config section at startup.
+
+        Called once at app creation for plugins that have a config
+        section. Raise fgap.core.config.ConfigError on schema violations
+        so the server fails fast instead of misbehaving at request time.
+
+        The default accepts anything (backward compatibility). Plugins
+        that define a strict schema override this; strict schemas treat
+        everything not explicitly optional as required, and reject unknown
+        keys — a config that is missing something or contains something
+        unrecognized is wrong either way.
+        """
+
     async def health_check(self, config: dict) -> list[dict]:
         """Check credential health. Returns list of status dicts."""
         return []

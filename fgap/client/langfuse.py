@@ -19,23 +19,69 @@ MAIN_HELP = """\
 fgap-langfuse - finest-grained auth proxy for langfuse
 
 USAGE
-  fgap-langfuse <command> [args...]
+  fgap-langfuse [--project <name>] <command> [args...]
 
 All arguments are forwarded to the langfuse CLI via the fgap proxy.
 Credentials are injected by the proxy — no local API keys needed.
+
+Langfuse API keys are per-project: --project (or the
+FGAP_LANGFUSE_PROJECT environment variable) selects which configured
+credential the proxy uses. It must match a 'resources' pattern of a
+credential entry in the proxy config; there is no default.
 
 COMMANDS
   api         Interact with Langfuse API resources
   auth        Show authentication status
 
 EXAMPLES
-  fgap-langfuse api traces list --limit 10
-  fgap-langfuse api prompts list
-  fgap-langfuse api sessions list --limit 5
-  fgap-langfuse api __schema
+  fgap-langfuse --project my-project-prod api traces list --limit 10
+  fgap-langfuse --project my-project-prod api __schema
+  FGAP_LANGFUSE_PROJECT=my-project-staging fgap-langfuse api sessions list
+  fgap-langfuse auth list
 
 Run 'fgap-langfuse api <resource> --help' for more information.
 """
+
+NO_PROJECT_ERROR = """\
+Error: no project specified.
+
+Langfuse API keys are per-project, so the proxy needs to know which
+project's credential to use. Pass --project <name> or set the
+FGAP_LANGFUSE_PROJECT environment variable. Run 'fgap-langfuse auth list'
+to see the configured projects.
+"""
+
+
+def extract_project(args: list[str], environ: dict | None = None,
+                    ) -> tuple[str | None, list[str]]:
+    """Pull --project out of argv, falling back to FGAP_LANGFUSE_PROJECT.
+
+    Returns (project or None, args with the flag removed). The flag wins
+    over the environment variable.
+    """
+    if environ is None:
+        environ = dict(os.environ)
+    project = None
+    remaining: list[str] = []
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg == "--project":
+            if i + 1 < len(args):
+                project = args[i + 1]
+                i += 2
+            else:
+                i += 1
+            continue
+        if arg.startswith("--project="):
+            project = arg.split("=", 1)[1]
+            i += 1
+            continue
+        remaining.append(arg)
+        i += 1
+    if not project:
+        project = environ.get("FGAP_LANGFUSE_PROJECT") or None
+    return project, remaining
 
 AUTH_HELP = """\
 Display authentication status for configured Langfuse credentials.
@@ -47,6 +93,8 @@ USAGE
 
 async def run(args: list[str], proxy_url: str) -> int:
     """Main wrapper logic. Returns exit code."""
+    project, args = extract_project(args)
+
     if not args or args[0] in ("--help", "-h"):
         print(MAIN_HELP, end="")
         return 0
@@ -54,13 +102,18 @@ async def run(args: list[str], proxy_url: str) -> int:
     cmd = args[0]
     rest = args[1:]
 
-    # Auth command: queries /auth/status instead of /cli
+    # Auth command: queries /auth/status instead of /cli (no project needed)
     if cmd == "auth":
         async with ProxyClient(proxy_url) as client:
             return await _handle_auth(rest, client)
 
-    # Langfuse uses "default" as resource (single project per config)
-    resource = "default"
+    if project is None:
+        if not _has_help_flag(args):
+            print(NO_PROJECT_ERROR, end="", file=sys.stderr)
+            return 2
+        resource = ""  # the server serves --help without a resource
+    else:
+        resource = project
 
     # Longer timeout: langfuse CLI can be slow on large trace lists
     async with ProxyClient(proxy_url, timeout=120) as client:
@@ -124,6 +177,9 @@ async def _handle_auth(args: list[str], client: ProxyClient) -> int:
         resources = cred.get("resources", [])
         if resources:
             print(f"      Resources: {', '.join(resources)}")
+        permissions = cred.get("permissions", [])
+        if permissions:
+            print(f"      Permissions: {', '.join(permissions)}")
 
     return 0
 

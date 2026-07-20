@@ -68,14 +68,31 @@
     },
 
     // Langfuse: langfuse CLI (LLM tracing/prompts)
+    //
+    // Langfuse API keys are per-project, so configure one entry per
+    // project. The client selects an entry with --project <name> /
+    // FGAP_LANGFUSE_PROJECT (matched against "resources", first match
+    // wins). Prefer explicit project names over "*" so a typo fails
+    // instead of silently falling through to another project.
+    //
+    // "permissions" is required: "read" allows list/get (and
+    // "api __schema"), "write" allows create/update/delete. Unrecognized
+    // verbs are always denied.
     "langfuse": {
       "credentials": [
         {
-          "public_key": "pk-lf-YOUR_PUBLIC_KEY",
-          "secret_key": "sk-lf-YOUR_SECRET_KEY",
+          "public_key": "pk-lf-YOUR_PROD_PUBLIC_KEY",
+          "secret_key": "sk-lf-YOUR_PROD_SECRET_KEY",
           // Optional: override for self-hosted or US region
           // "host": "https://us.cloud.langfuse.com",
-          "resources": ["*"]
+          "resources": ["my-project-prod"],
+          "permissions": ["read"]
+        },
+        {
+          "public_key": "pk-lf-YOUR_STAGING_PUBLIC_KEY",
+          "secret_key": "sk-lf-YOUR_STAGING_SECRET_KEY",
+          "resources": ["my-project-staging"],
+          "permissions": ["read"]
         }
       ]
     },

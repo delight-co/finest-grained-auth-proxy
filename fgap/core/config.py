@@ -51,6 +51,29 @@ def load_config(path: str) -> dict:
     return config
 
 
+def check_keys(obj: dict, *, required: set[str], context: str,
+               optional: set[str] = frozenset()) -> None:
+    """Strict key check for plugin config schemas.
+
+    Everything not explicitly optional is required, and keys outside the
+    schema are rejected — a config that is missing something or contains
+    something unrecognized is wrong either way.
+
+    Raises:
+        ConfigError: listing the missing / unknown keys.
+    """
+    missing = required - obj.keys()
+    if missing:
+        raise ConfigError(
+            f"{context}: missing required key(s): {', '.join(sorted(missing))}"
+        )
+    unknown = obj.keys() - required - optional
+    if unknown:
+        raise ConfigError(
+            f"{context}: unknown key(s): {', '.join(sorted(unknown))}"
+        )
+
+
 def _validate_plugin_config(name: str, plugin_config: dict) -> None:
     if not isinstance(plugin_config, dict):
         raise ConfigError(f"Plugin config '{name}' must be an object")
