@@ -344,6 +344,20 @@ Changes from fgp:
 - `repos` → `resources` — generic term.
 - `rules` removed — allow all. Future: `plugins.github.policy`.
 
+### Permission architecture (three layers)
+
+Whenever authorization matters beyond "have credential or not," fgap splits responsibility three ways. This is the model that replaced the abandoned fgp `evaluate_policy` — plugin-owned judgment instead of a central per-endpoint table.
+
+- **Core** provides the choke point and the generic tools: it calls `Plugin.check_policy(args, resource, config)` before credential selection on every `/cli` request, turns a returned deny reason into `HTTP 403 Policy denied: <reason>`, and exposes `match_resource` / `check_keys` helpers so plugins don't reinvent them. Core never encodes what any specific service considers safe.
+- **Plugin** owns the judgment logic. Permission grammar and granularity are service-specific: langfuse maps CLI verbs (`list`/`get` = read, `create`/`update`/`delete` = write, `__schema` = read), the aws plugin uses curated per-service `(service, operation)` tables because verb prefixes alone are unsafe (`ssm get-parameter` returns secrets, `logs start-query` is read-intent with a write-shaped verb, `ecr get-login-password` mints credentials). Unrecognized shapes are denied by default (allowlist, not denylist).
+- **Config** holds the concrete grants. They ride the same first-match-wins `resources` routing the credential itself uses, so a grant and the key it applies to can't drift apart — one entry declares both. langfuse: `permissions: ["read"]`. aws: `services: ["logs", "ecs"]`.
+
+`Plugin.validate_config(config)` runs at `create_routes` time to enforce a strict schema per plugin: everything not explicitly optional is required, unknown keys are rejected, and any config section for a plugin that is not loaded is a startup error. A config that is missing something or contains something unrecognized is wrong either way — the alternative is a runtime error with the credential unusable.
+
+The credential itself never enters the sandbox. On `/cli`, credentials resolve to injected env vars for the CLI subprocess; on `/proxy/<service>/<path>`, the proxy attaches the auth header (Bearer / Basic / arbitrary header name / OAuth2) upstream. When a service that read-only-in-grammar is paired with a read-only IAM principal, grammar and principal fail independently — a grammar gap is caught by the principal, an over-granted principal is caught by the grammar.
+
+The s3 plugin's internal `_check_policy` predates the hook and is a candidate to migrate onto it; the plugin has always operated on the same three-way split, it just did the split behind a private function before the interface existed.
+
 ### Core Implementation Notes
 
 **config.py**: Load JSON5, validate chmod 600, validate plugin config sections. Each plugin can define its own validation (e.g., GitHub requires `token` + `resources`, Google requires `client_id` + `client_secret` + `refresh_token` + `resources`).
