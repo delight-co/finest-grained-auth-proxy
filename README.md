@@ -28,7 +28,7 @@ CLI tools (gh, gog) / GitHub API / github.com (git)
 | Google | `gog` | Gmail, Calendar, Sheets, Docs, Drive, Contacts |
 | Fly.io | `fly` / `flyctl` | App management via proxy-side flyctl; deploy/logs/ssh via logged per-app token handout |
 | AWS | `fgap-aws` | Read-only observability (CloudWatch logs / metrics, ECS, ECR) via a curated allowlist; secret-bearing reads and credential minting denied |
-| HTTP | stock `curl` | Generic forward proxy for authenticated HTTP APIs (`bearer` / `basic` / `header` / `oauth2` auth); MCP-friendly header passthrough for MCP Streamable HTTP (JSON) servers |
+| HTTP | stock `curl` | Generic forward proxy for authenticated HTTP APIs (`bearer` / `basic` / `header` / `oauth2` auth); passes MCP Streamable HTTP traffic when the server replies with JSON (`initialize`, `tools/list`, kick-and-poll tools). SSE responses (`text/event-stream`, GET SSE stream) are not supported yet — the response body is buffered |
 | S3 | stock `aws` / `rclone` | S3-compatible storage (AWS S3, Cloudflare R2, MinIO) via SigV4 re-signing; bucket allow-list, deletion deny, immutable puts |
 
 ## Quick Start

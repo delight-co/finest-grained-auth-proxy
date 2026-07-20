@@ -3,6 +3,20 @@
 Proxies HTTP requests to upstream APIs with credential injection.
 No CLI binary needed — sandbox uses curl directly.
 
+MCP support (scope): the request/response header allowlists include
+the headers required by the Model Context Protocol Streamable HTTP
+transport (spec 2025-03-26), so this proxy can sit in front of MCP
+servers that answer request-response in JSON — ``initialize``,
+``tools/list``, and kick-and-poll style tools that return a small JSON
+body. Servers that stream events over long ``text/event-stream``
+responses (or the GET SSE side of Streamable HTTP) are *not* supported
+yet: the response handler buffers the full body before returning, so
+an SSE stream would be delivered as one delayed chunk. A follow-up can
+add chunked passthrough plus the SSE-specific response header
+allowlist entries (``Cache-Control``, ``Connection``,
+``Transfer-Encoding``, ``X-Accel-Buffering``) when a real SSE upstream
+needs it.
+
 Auth modes:
 
 - ``bearer``: ``Authorization: Bearer <token>``

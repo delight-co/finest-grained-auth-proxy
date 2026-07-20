@@ -130,9 +130,12 @@
     //
     // Auth modes: "bearer" / "basic" / "header" (arbitrary header name,
     // e.g. for x-api-key-style APIs including MCP servers) / "oauth2".
-    // Request/response header allowlists include the MCP-required headers
-    // (MCP-Protocol-Version, Mcp-Session-Id, Origin, ...) so the proxy
-    // passes Streamable HTTP JSON-only MCP traffic through unmodified.
+    //
+    // MCP support: passes MCP Streamable HTTP traffic when the server
+    // replies with JSON (initialize, tools/list, kick-and-poll tools).
+    // Servers that stream events over long text/event-stream responses
+    // (or the GET SSE stream) are NOT supported yet — the response body
+    // is buffered before it is returned to the client.
     "http_proxy": {
       "services": {
         "some_mcp": {
