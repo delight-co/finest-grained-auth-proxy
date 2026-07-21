@@ -48,6 +48,42 @@ class TestCheckPolicyUnit:
     def test_empty_args_allowed(self):
         assert check_policy([], "owner/repo", {}) is None
 
+    # gh repo {clone,create,fork,sync} write to the SERVER-side filesystem
+    # (where fgap runs the CLI). The client and server share path names but
+    # not the same FS, so these must be denied — a /cli caller must not be
+    # able to write to arbitrary server-writable paths via the server's
+    # privileges. Clone goes through the git proxy endpoint instead.
+    def test_repo_clone_denied(self):
+        r = check_policy(
+            ["repo", "clone", "owner/repo", "/some/path"], "owner/repo", {},
+        )
+        assert r is not None
+        assert "server" in r
+
+    def test_repo_create_denied(self):
+        assert check_policy(
+            ["repo", "create", "owner/repo"], "owner/repo", {},
+        ) is not None
+
+    def test_repo_fork_denied(self):
+        assert check_policy(
+            ["repo", "fork", "owner/repo"], "owner/repo", {},
+        ) is not None
+
+    def test_repo_sync_denied(self):
+        assert check_policy(
+            ["repo", "sync", "owner/repo"], "owner/repo", {},
+        ) is not None
+
+    def test_repo_view_allowed(self):
+        # query-only subcommands (no FS write) stay allowed
+        assert check_policy(
+            ["repo", "view", "owner/repo"], "owner/repo", {},
+        ) is None
+
+    def test_repo_list_allowed(self):
+        assert check_policy(["repo", "list"], "owner/repo", {}) is None
+
 
 @pytest.fixture
 async def gh_client():
@@ -90,3 +126,14 @@ class TestRouterEnforcement:
         assert resp.status == 403
         body = await resp.text()
         assert _DUMMY_TOKEN not in body
+
+    async def test_repo_clone_returns_403(self, gh_client):
+        # A direct /cli POST with gh repo clone must be denied at the choke
+        # point — otherwise the server runs git on its own FS at the path
+        # the caller gave.
+        resp = await gh_client.post("/cli", json={
+            "tool": "gh",
+            "args": ["repo", "clone", "owner/repo", "/some/path"],
+            "resource": "owner/repo",
+        })
+        assert resp.status == 403
