@@ -310,6 +310,12 @@ All commands require a resource (owner/repo) to select the right credential. Com
 | `gh api /user`, `/orgs/...`, `/search/...` | Non-`repos/` endpoints — no repo to match |
 | `gh api graphql` | Raw GraphQL blocked — use high-level commands (issue, pr, discussion, sub-issue) |
 
+Credential-leaking commands, denied regardless of resource:
+
+| Blocked command | Reason |
+|----------------|--------|
+| `gh auth *` | Leaks the injected credential — `auth token` prints `GH_TOKEN` to stdout; `auth status --show-token` and `auth setup-git` do the same. The deny is enforced at the server choke point, so a direct `/cli` POST cannot bypass it. Use `fgap-gh auth status` (queries `/auth/status`), which is unaffected. |
+
 Other limitations:
 
 - **Git LFS**: the proxy forwards LFS batch requests. Fine-grained PATs have been observed to work in some setups (see GitHub App Credentials above), but this isn't fully understood and may not hold everywhere. If you see LFS auth failures, switch to a GitHub App credential — that's the known-reliable path.
