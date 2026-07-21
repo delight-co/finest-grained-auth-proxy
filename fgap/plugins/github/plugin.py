@@ -59,6 +59,12 @@ class GitHubPlugin(Plugin):
             "sub-issue": execute_sub_issue,
         }
 
+    def check_policy(self, args: list[str], resource: str,
+                     config: dict) -> str | None:
+        from .policy import check_policy as _check_policy
+
+        return _check_policy(args, resource, config)
+
     async def health_check(
         self, config: dict, *, _api_url: str = _GITHUB_API_URL,
     ) -> list[dict]:
