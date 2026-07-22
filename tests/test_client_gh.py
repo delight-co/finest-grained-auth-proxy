@@ -625,6 +625,132 @@ class TestTransformApiFieldFiles:
 
 
 # =========================================================================
+# run(): issue close --duplicate-of
+# =========================================================================
+
+
+class TestIssueCloseAsDuplicate:
+    async def test_happy_path_number(self, mock_proxy):
+        server, state = mock_proxy
+        # Canonical issue lookup returns id=999.
+        state["responses"].append(web.json_response({
+            "exit_code": 0, "stdout": '{"id": 999}', "stderr": "",
+        }))
+        code = await run(
+            ["issue", "close", "108", "--duplicate-of", "117", "-R", "o/r"],
+            _url(server),
+        )
+        assert code == 0
+        # Two /cli requests: the ID lookup, then the PATCH close.
+        assert len(state["requests"]) == 2
+        lookup, patch = state["requests"]
+        assert lookup["args"] == ["api", "/repos/o/r/issues/117"]
+        assert patch["args"] == [
+            "api", "-X", "PATCH", "/repos/o/r/issues/108",
+            "-f", "state=closed", "-f", "state_reason=duplicate",
+            "-F", "duplicate_issue_id=999",
+        ]
+
+    async def test_duplicate_of_with_hash_prefix(self, mock_proxy):
+        server, state = mock_proxy
+        state["responses"].append(web.json_response({
+            "exit_code": 0, "stdout": '{"id": 999}', "stderr": "",
+        }))
+        code = await run(
+            ["issue", "close", "108", "--duplicate-of", "#117", "-R", "o/r"],
+            _url(server),
+        )
+        assert code == 0
+        assert state["requests"][0]["args"] == ["api", "/repos/o/r/issues/117"]
+
+    async def test_reason_duplicate_alone_errors(self, mock_proxy, capsys):
+        server, state = mock_proxy
+        code = await run(
+            ["issue", "close", "108", "--reason", "duplicate", "-R", "o/r"],
+            _url(server),
+        )
+        assert code == 1
+        assert "--reason duplicate requires --duplicate-of" in (
+            capsys.readouterr().err
+        )
+        assert state["requests"] == []
+
+    async def test_conflicting_reason_errors(self, mock_proxy, capsys):
+        server, state = mock_proxy
+        code = await run(
+            [
+                "issue", "close", "108",
+                "--reason", "completed", "--duplicate-of", "117",
+                "-R", "o/r",
+            ],
+            _url(server),
+        )
+        assert code == 1
+        assert "incompatible with --duplicate-of" in capsys.readouterr().err
+        assert state["requests"] == []
+
+    async def test_cross_repo_duplicate_rejected_for_now(
+        self, mock_proxy, capsys,
+    ):
+        server, state = mock_proxy
+        code = await run(
+            [
+                "issue", "close", "108",
+                "--duplicate-of", "anthropics/claude-code#42",
+                "-R", "o/r",
+            ],
+            _url(server),
+        )
+        assert code == 1
+        assert "cross-repo duplicates are not supported" in (
+            capsys.readouterr().err
+        )
+        assert state["requests"] == []
+
+    async def test_completed_reason_falls_through_to_stock(self, mock_proxy):
+        """--reason completed is stock gh territory; our handler stays out."""
+        server, state = mock_proxy
+        code = await run(
+            [
+                "issue", "close", "108", "--reason", "completed",
+                "-R", "o/r",
+            ],
+            _url(server),
+        )
+        assert code == 0
+        # Exactly one /cli request — the passthrough gh issue close.
+        assert len(state["requests"]) == 1
+        assert state["requests"][0]["args"] == [
+            "issue", "close", "108", "--reason", "completed",
+        ]
+
+    async def test_comment_posted_before_close(self, mock_proxy):
+        server, state = mock_proxy
+        state["responses"].append(web.json_response({
+            "exit_code": 0, "stdout": '{"id": 999}', "stderr": "",
+        }))
+        code = await run(
+            [
+                "issue", "close", "108",
+                "--duplicate-of", "117",
+                "-c", "sup #117",
+                "-R", "o/r",
+            ],
+            _url(server),
+        )
+        assert code == 0
+        assert len(state["requests"]) == 3
+        # ID lookup → issue comment → PATCH close
+        assert state["requests"][0]["args"][0:2] == ["api", "/repos/o/r/issues/117"]
+        assert state["requests"][1]["args"] == [
+            "issue", "comment", "108", "-b", "sup #117",
+        ]
+        assert state["requests"][2]["args"][:4] == [
+            "api", "-X", "PATCH", "/repos/o/r/issues/108",
+        ]
+
+
+# =========================================================================
 # run(): pr create --head injection
 # =========================================================================
 
