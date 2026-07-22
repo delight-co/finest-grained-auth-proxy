@@ -144,9 +144,9 @@ async def _handle_auth(args: list[str], client: ProxyClient) -> int:
 
     for i, cred in enumerate(creds):
         valid = cred.get("valid", False)
-        masked = cred.get("masked_keyring_password", "***")
+        hint = cred.get("keyring_hint", "***")
         mark = "\u2713" if valid else "\u2717"
-        print(f"  {mark} [{i}] {masked}")
+        print(f"  {mark} [{i}] {hint}")
         if valid:
             if cred.get("accounts"):
                 print(f"      Accounts: {cred['accounts']}")

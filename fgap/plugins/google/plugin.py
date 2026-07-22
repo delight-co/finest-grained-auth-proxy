@@ -50,7 +50,7 @@ class GooglePlugin(Plugin):
                 keyring_pw = cred.get("keyring_password", "")
                 entry = {
                     "type": "oauth",
-                    "masked_keyring_password": mask_value(keyring_pw, visible_prefix=4),
+                    "keyring_hint": mask_value(keyring_pw, visible_prefix=4),
                     "resources": cred.get("resources", []),
                 }
                 try:

@@ -18,7 +18,7 @@ class TestGoogleHealthCheck:
         r = results[0]
         assert r["valid"] is True
         assert r["accounts"] == "us***@example.com"
-        assert r["masked_keyring_password"] == "test***"
+        assert r["keyring_hint"] == "test***"
         assert r["resources"] == ["*"]
 
     async def test_invalid_keyring(self):
@@ -85,7 +85,7 @@ class TestGoogleHealthCheck:
             {"keyring_password": "ab", "resources": ["*"]},
         ]}
         results = await plugin.health_check(config, _run_gog=fake_run_gog)
-        assert results[0]["masked_keyring_password"] == "***"
+        assert results[0]["keyring_hint"] == "***"
 
     async def test_run_gog_exception(self):
         async def failing_run_gog(keyring_pw):
