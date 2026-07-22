@@ -309,4 +309,23 @@
       ]
     }
   }
+
+  // Managed local processes: helpers the proxy spawns on startup,
+  // restarts on crash (exponential backoff), and terminates on
+  // shutdown — typically stdio MCP servers wrapped by a stdio-to-HTTP
+  // bridge, with their API keys in env on the proxy host. Pair each
+  // with an http_proxy service whose upstream is the local port, so
+  // the sandbox reaches the helper through the proxy and never sees
+  // the credential. Status: GET /processes.
+  //
+  // "managed_processes": {
+  //   "some-mcp": {
+  //     "command": ["npx", "-y", "supergateway",
+  //                 "--stdio", "npx -y some-mcp-server",
+  //                 "--outputTransport", "streamableHttp",
+  //                 "--port", "9101"],
+  //     "env": { "SOME_API_KEY": "sk_YOUR_KEY" },
+  //     "restart": true
+  //   }
+  // }
 }

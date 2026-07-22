@@ -7,6 +7,7 @@ from aiohttp import web
 from fgap.core.config import ConfigError
 from fgap.core.credential import select_credential
 from fgap.core.executor import execute_cli
+from fgap.core.processes import ProcessSupervisor
 from fgap.core.http import (
     close_h2_client, close_session, set_h2_client, set_session,
 )
@@ -81,6 +82,24 @@ def create_routes(config: dict, plugins: dict[str, Plugin]) -> web.Application:
         await close_session()
 
     app.cleanup_ctx.append(session_ctx)
+
+    # Managed local processes (e.g. stdio MCP servers behind a bridge)
+    # share the server's lifetime; see fgap/core/processes.py.
+    managed_cfg = config.get("managed_processes", {})
+    if managed_cfg:
+        supervisor = ProcessSupervisor(managed_cfg)
+
+        async def processes_ctx(app):
+            await supervisor.start_all()
+            yield
+            await supervisor.stop_all()
+
+        app.cleanup_ctx.append(processes_ctx)
+
+        async def handle_processes(request: web.Request) -> web.Response:
+            return web.json_response({"processes": supervisor.status()})
+
+        app.router.add_get("/processes", handle_processes)
 
     async def handle_cli(request: web.Request) -> web.Response:
         data = await request.json()

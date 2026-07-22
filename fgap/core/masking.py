@@ -28,11 +28,28 @@ def collect_secrets(config: dict) -> set[str]:
     return secrets
 
 
+# Environment variable names that indicate the value is a credential
+# (managed_processes env blocks); short values are skipped so common
+# strings like port numbers never get masked out of log lines.
+_ENV_SECRET_KEY_RE = re.compile(
+    r"key|token|secret|password|credential", re.IGNORECASE,
+)
+_ENV_SECRET_MIN_LENGTH = 8
+
+
 def _walk(obj, secrets: set[str]) -> None:
     if isinstance(obj, dict):
         for key, value in obj.items():
             if key in SECRET_KEYS and isinstance(value, str) and value:
                 secrets.add(value)
+            elif key == "env" and isinstance(value, dict):
+                for env_key, env_value in value.items():
+                    if (
+                        isinstance(env_value, str)
+                        and len(env_value) >= _ENV_SECRET_MIN_LENGTH
+                        and _ENV_SECRET_KEY_RE.search(env_key)
+                    ):
+                        secrets.add(env_value)
             else:
                 _walk(value, secrets)
     elif isinstance(obj, list):
