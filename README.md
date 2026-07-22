@@ -4,7 +4,7 @@
 
 A multi-CLI auth proxy that isolates credentials from AI agent sandbox environments.
 
-Successor to [fgp](https://github.com/carrotRakko/github-finest-grained-permission-proxy) (GitHub-only). fgap supports multiple CLI tools via a plugin system.
+Successor to [fgp](https://github.com/carrotRakko/github-finest-grained-permission-proxy) (GitHub-only). fgap supports multiple CLI tools and HTTP upstreams via a plugin system.
 
 ## How It Works
 
@@ -35,365 +35,55 @@ CLI tools (gh, gog, notion, langfuse, flyctl, aws)
 | HTTP | stock `curl` | Generic forward proxy for authenticated HTTP APIs (`bearer` / `basic` / `header` / `oauth2` auth); passes MCP Streamable HTTP traffic. SSE responses (`text/event-stream`) are relayed without buffering — set `"streaming": true` on SSE/LLM services |
 | S3 | stock `aws` / `rclone` | S3-compatible storage (AWS S3, Cloudflare R2, MinIO) via SigV4 re-signing; bucket allow-list, deletion deny, immutable puts |
 
+The proxy also supervises **managed local processes** (typically stdio MCP servers behind a stdio-to-HTTP bridge) so their API keys stay on the host — see [docs/operations.md](docs/operations.md).
+
 ## Quick Start
 
-### 1. Create Config
+### 1. Create config (proxy host)
 
 ```bash
 cp config.example.json5 config.json5
-# Edit config.json5 with your credentials
+# Fill in your credentials
 chmod 600 config.json5
 ```
 
-See [config.example.json5](config.example.json5) for all options.
+[config.example.json5](config.example.json5) is the source of truth for the config shape — every plugin and option, commented.
 
-### 2. Start the Proxy
-
-The proxy shells out to the real CLIs, so install the ones your config enables on the host: [gh](https://cli.github.com/), [gog](https://github.com/steipete/gogcli), [flyctl](https://fly.io/docs/flyctl/), [aws](https://docs.aws.amazon.com/cli/), langfuse, [notion](https://github.com/4ier/notion-cli). The `http_proxy` and `s3` plugins need no host CLI.
+### 2. Start the proxy (proxy host)
 
 ```bash
 uv run python main.py --config config.json5
 ```
 
-Default port: `8766`
+Default port: `8766`. The proxy shells out to the real CLIs, so install the ones your config enables: [gh](https://cli.github.com/), [gog](https://github.com/steipete/gogcli), [flyctl](https://fly.io/docs/flyctl/), [aws](https://docs.aws.amazon.com/cli/), langfuse, [notion](https://github.com/4ier/notion-cli); the `http_proxy` and `s3` plugins need none. Daemon mode and the rest of the runbook: [docs/operations.md](docs/operations.md).
 
-#### Background mode
-
-```bash
-uv run python main.py --config config.json5 \
-  --daemon --pidfile /tmp/fgap.pid --logfile /tmp/fgap.log
-
-# Stop
-kill $(cat /tmp/fgap.pid)
-```
-
-`--logfile` is required with `--daemon`. `--pidfile` and `--logfile` also work in foreground mode.
-
-### 3. Install Wrappers (Sandbox Side)
+### 3. Install wrappers (sandbox side)
 
 ```bash
-# Install the fgap package (ships all wrappers as entry points)
 curl -fsSL https://raw.githubusercontent.com/delight-co/finest-grained-auth-proxy/main/install.sh | bash
 
 # Or additionally replace gh/gog with symlinks to their wrappers
 curl -fsSL https://raw.githubusercontent.com/delight-co/finest-grained-auth-proxy/main/install.sh | bash -s -- --replace
 ```
 
-The package install provides `fgap-gh`, `fgap-gog`, `fgap-notion`, `fgap-langfuse`, `fgap-fly`, `fgap-aws` (and the host-side `fgap-oauth-login`). `--replace` symlinks `gh` and `gog` only; to shadow the other CLIs, add symlinks the same way (e.g. `sudo ln -s "$(command -v fgap-fly)" /usr/local/bin/fly`).
+Per-tool usage, wrapper aliasing, and behavior notes: [docs/usage.md](docs/usage.md).
 
-Set the proxy URL if not on localhost:
+## Documentation
 
-```bash
-export FGAP_PROXY_URL=http://fgap:8766
-```
-
-## Usage (From Sandbox)
-
-### gh commands
-
-```bash
-gh issue list -R owner/repo
-gh pr view 123 -R owner/repo
-gh api repos/owner/repo/issues
-gh auth status
-```
-
-### git operations
-
-```bash
-# Clone via proxy
-git clone http://fgap-host:8766/git/owner/repo.git
-
-# Existing repos: change remote
-git remote set-url origin http://fgap-host:8766/git/owner/repo.git
-```
-
-### gog commands
-
-```bash
-gog gmail search 'newer_than:7d'
-gog calendar events primary
-gog sheets get SHEET_ID 'Tab!A1:D10'
-gog auth list
-```
-
-### Custom commands (not in stock gh)
-
-```bash
-gh discussion list -R owner/repo
-gh discussion create -R owner/repo --title "..." --body "..." --category "General"
-gh sub-issue list 123 -R owner/repo
-gh sub-issue add 100 200 -R owner/repo
-gh issue edit 123 --old "typo" --new "fixed" -R owner/repo
-gh issue close 123 --duplicate-of 456 -R owner/repo
-```
-
-### AWS read-only observability
-
-```bash
-fgap-aws auth list                                             # accounts, identity, granted services
-fgap-aws --account my-account logs tail /my/log-group --since 10m
-fgap-aws --account my-account ecs describe-services --cluster c --services s
-fgap-aws --account my-account cloudwatch list-metrics --namespace ECS/ContainerInsights
-```
-
-Only a curated read-only set per service is allowed (`logs`, `ecs`, `cloudwatch`, `ecr`). Denials name the reason: write operations, unsupported services (`ssm`, `secretsmanager`, ...), credential minting (`ecr get-login-password`), `--follow` streams, and `--profile` / `--endpoint-url` / `--debug` are all rejected at the proxy. The grant is account-wide per service — if multiple workloads share the account, reads span all of them. Pair the proxy-side credential with a read-only IAM principal ([aws-readonly-policy.example.json](./aws-readonly-policy.example.json)) so the guarantee holds in two independent layers.
-
-### S3-compatible storage
-
-No wrapper needed — point a stock S3 client at the proxy with dummy credentials. The proxy strips the dummy signature, enforces policy (bucket allow-list, deletion deny, immutable puts), re-signs with the real credentials, and streams to the upstream (AWS S3, Cloudflare R2, MinIO, ...).
-
-`~/.aws/credentials` (values are placeholders on purpose — the real keys live on the proxy side):
-
-```ini
-[media]
-aws_access_key_id = dummy
-aws_secret_access_key = dummy
-```
-
-`~/.aws/config`:
-
-```ini
-[profile media]
-region = auto
-endpoint_url = http://fgap-host:8766/s3/media
-request_checksum_calculation = when_required
-response_checksum_validation = when_required
-s3 =
-    addressing_style = path
-```
-
-```bash
-aws s3 cp video.mp4 s3://my-bucket/team/project/video.mp4 --profile media
-aws s3 ls s3://my-bucket/team/ --recursive --profile media
-aws s3 cp s3://my-bucket/team/project/video.mp4 ./video.mp4 --profile media
-```
-
-## Config Reference
-
-```json5
-{
-  "port": 8766,
-  "timeouts": {
-    "cli": 60,       // CLI subprocess timeout (seconds)
-    "http": 30        // Outbound HTTP timeout (seconds)
-  },
-  "plugins": {
-    "github": {
-      // Credentials evaluated top-to-bottom, first match wins
-      "credentials": [
-        { "token": "github_pat_ORG",      "resources": ["your-org/*"] },
-        { "token": "github_pat_PERSONAL", "resources": ["your-username/*"] },
-        { "token": "ghp_CLASSIC",         "resources": ["some-org/repo"] },
-        // GitHub App credential: short-lived installation tokens are
-        // minted (and cached) automatically from the App's private key
-        {
-          "app_id": 123456,
-          "installation_id": 12345678,
-          "private_key_path": "/path/to/github-app.pem",
-          "repositories": "matched",              // optional narrowing
-          "permissions": { "contents": "write" }, // optional narrowing
-          "resources": ["your-org/*"]
-        },
-        { "token": "github_pat_FALLBACK", "resources": ["*"] }
-      ]
-    },
-    "google": {
-      "credentials": [
-        {
-          "keyring_password": "...",  // gog keyring password
-          "account": "user@...",      // Optional: Google account
-          "resources": ["*"]          // Resource patterns
-        }
-      ]
-    },
-    "aws": {
-      // Read-only aws CLI. Curated allowlist per service; write ops,
-      // secret-returning reads and credential minting are denied.
-      // Pair with a read-only principal: aws-readonly-policy.example.json
-      "credentials": [
-        {
-          "profile": "my-readonly-profile",  // or access_key_id + secret_access_key
-          "region": "us-east-1",
-          "resources": ["my-account"],       // account alias for --account
-          "services": ["logs", "ecs", "cloudwatch", "ecr"]
-        }
-      ]
-    },
-    "s3": {
-      "services": {
-        "media": {
-          // S3-compatible endpoint (AWS S3, Cloudflare R2, MinIO, ...)
-          "endpoint": "https://ACCOUNT_ID.r2.cloudflarestorage.com",
-          "region": "auto",
-          "access_key_id": "...",
-          "secret_access_key": "...",
-          "buckets": ["my-bucket"],   // Optional: bucket allow-list
-          "deny": ["delete"],         // Optional: reject deletions
-          "immutable_puts": true      // Optional: never overwrite existing keys
-        }
-      }
-    }
-  }
-}
-```
-
-### Resource Patterns
-
-| Pattern | Matches |
-|---------|---------|
-| `owner/repo` | Exact match (case-insensitive) |
-| `owner/*` | All repos of that owner |
-| `*` | Everything (fallback) |
-
-Credentials are evaluated top-to-bottom. First match wins.
-
-### GitHub App Credentials
-
-Instead of a PAT, a credential can reference a GitHub App. fgap signs a short-lived JWT with the App's private key, mints an installation access token (valid one hour), caches it, and re-mints before expiry — callers always see a fresh token, and the only long-lived secret is the key file.
-
-Why you might want this over a fine-grained PAT:
-
-- **Git LFS, as a safety net.** GitHub's LFS batch API used to reject fine-grained PATs (a long-standing platform limitation) — that's why App credentials were added. We've recently observed fine-grained PATs working for LFS in some setups: the proxy forwards the batch request, GitHub returns 200, and LFS objects download via a signed S3 URL that bypasses the proxy entirely. We don't fully understand why this works now (possibly a platform change). If you hit LFS failures with a fine-grained PAT, an App credential is the known-reliable fix.
-- **Narrowing at mint time.** `"repositories": "matched"` scopes every minted token to the single repository that matched the credential's resource patterns; a `"permissions"` map caps token permissions below what the App is allowed. One App can serve many differently-scoped credentials.
-- **No owner, no expiry surprises.** Tokens don't belong to a person and the key doesn't expire; revocation and audit happen at the App level.
-
-Setup: create a GitHub App (only the permissions you need, webhook off), install it on the repositories you want to expose, note the App ID and the installation ID (the number at the end of the installation's URL), generate a private key, and point `private_key_path` at it.
-
-## Endpoints
-
-| Endpoint | Purpose |
-|----------|---------|
-| `POST /cli` | Execute a CLI command |
-| `GET /git/{owner}/{repo}.git/...` | Git smart HTTP proxy |
-| `ANY /proxy/{service}/...` | Generic HTTP forward proxy with credential injection |
-| `ANY /s3/{service}/{bucket}/{key}` | S3-compatible storage proxy with SigV4 re-signing |
-| `POST /download` | Proxy-authenticated file download (`gh release download` and similar file-streaming commands) |
-| `GET /health` | Lightweight health check (for Docker HEALTHCHECK) |
-| `GET /auth/status` | Credential validity check (for debugging) |
-| `GET /processes` | Managed local processes status |
+| Document | Covers |
+|---|---|
+| [docs/usage.md](docs/usage.md) | Sandbox side: installing wrappers, per-tool usage and limits |
+| [docs/operations.md](docs/operations.md) | Proxy host: daemon mode, health/status endpoints, static bearer token files (`claude setup-token`), OAuth2 login + provider known-goods, GitHub App credentials, managed processes |
+| [docs/architecture.md](docs/architecture.md) | Design: components, endpoint surface, wire protocol, credential selection, plugin interface, permission model |
+| [config.example.json5](config.example.json5) | Config shape — every plugin and option, commented |
+| [AGENTS.md](AGENTS.md) | Conventions for AI agents working on this repo, including the documentation source-of-truth map |
 
 ## Security
 
 - Credentials stay on the proxy side, invisible to the sandbox
-- Config file should be `chmod 600` (readable only by owner)
-- Audit logging: all CLI invocations are logged with tool, resource, and exit code
-- Credential masking: secrets are replaced with `***` in all log output
-- Email addresses in `/auth/status` responses are masked
-- **Local network only**: This proxy has no authentication. Do not expose to the internet.
-
-## Limitations
-
-Every invocation runs under a credential selected by resource: the client resolves it from `-R owner/repo`, a repo positional, the API endpoint path, or the cwd's git remote — and refuses with "Could not determine repository" when none is found.
-
-Consequences for commands that aren't repo-scoped:
-
-- User-scoped commands (`gh gist`, `gh status`, `gh api /user`, `/orgs/...`, ...) are not blocked — they execute under whichever credential the detected resource selects. Results reflect that token's identity and grants (a fine-grained PAT scoped to repos typically lacks user-scoped permissions), so pick the repo to pick the credential.
-- `gh api graphql` is deliberately blocked by the client — use the high-level commands (issue, pr, discussion, sub-issue) instead.
-
-Credential-leaking commands, denied regardless of resource:
-
-| Blocked command | Reason |
-|----------------|--------|
-| `gh auth *` | Leaks the injected credential — `auth token` prints `GH_TOKEN` to stdout; `auth status --show-token` and `auth setup-git` do the same. The deny is enforced at the server choke point, so a direct `/cli` POST cannot bypass it. Use `fgap-gh auth status` (queries `/auth/status`), which is unaffected. |
-
-Other limitations:
-
-- **Git LFS**: the proxy forwards LFS batch requests. Fine-grained PATs have been observed to work in some setups (see GitHub App Credentials above), but this isn't fully understood and may not hold everywhere. If you see LFS auth failures, switch to a GitHub App credential — that's the known-reliable path.
-- **Repo-scoped commands need context**: Use `-R owner/repo` (or a repository positional for `repo` subcommands), or run from inside a git repo with a remote
-- **`gh search *` is single-repo**: The wrapper consumes `--repo` for credential selection and re-injects it as a single `-R`, so cross-repo searches (no `--repo`, or multiple `--repo` flags) collapse to one repository
-- **`repo` positionals must come right after the subcommand**: `gh repo view owner/repo --json name` selects the credential for `owner/repo`; with flags first (`gh repo view --json name owner/repo`) the wrapper falls back to the cwd's git remote for credential selection. `owner/repo` and URL forms (`https://github.com/owner/repo`, `git@github.com:owner/repo.git`) are accepted
-- **Bare `repo` subcommands other than `view`**: `gh repo view` without an argument targets the cwd's remote; other bare invocations (e.g. `gh repo clone` with no argument) aren't supported because the proxy server has no local git context
-
-## Static bearer tokens from a file (`token_file`)
-
-An `http_proxy` credential can name a file to read the token from instead of inlining it:
-
-```json5
-"credentials": [
-  { "token_file": "~/.config/fgap/tokens/anthropic-bearer.txt", "resources": ["*"] }
-]
-```
-
-The file holds the token as a single line (surrounding whitespace is trimmed; keep it owner-only, `chmod 600`). It is re-read on **every request**, so writing a new token to the file rotates the credential with no restart. `token` and `token_file` are mutually exclusive per credential, and `token_file` works with the `bearer`, `basic`, and `header` auth modes. `GET /auth/status` reports whether each configured token file currently yields a token (`/health` is the bare liveness probe).
-
-### Anthropic with a Claude subscription (`claude setup-token`)
-
-The simplest way to front the Claude API for a coding-agent sandbox: mint a long-lived token with Claude Code's own `claude setup-token` (requires a Claude subscription), save it to the token file, and configure a static bearer service:
-
-```json5
-"anthropic": {
-  "upstream": "https://api.anthropic.com",
-  "auth": "bearer",
-  "streaming": true,
-  "forward_request_headers": ["anthropic-version", "anthropic-beta"],
-  "append_headers": { "anthropic-beta": "oauth-2025-04-20" },
-  "credentials": [
-    { "token_file": "~/.config/fgap/tokens/anthropic-bearer.txt", "resources": ["*"] }
-  ]
-}
-```
-
-Setup on the proxy host:
-
-```bash
-claude setup-token   # sign in with the subscription that should hold the token
-mkdir -p ~/.config/fgap/tokens
-# paste the printed sk-ant-oat01-… token into the file:
-printf '%s\n' 'sk-ant-oat01-REPLACE_ME' > ~/.config/fgap/tokens/anthropic-bearer.txt
-chmod 600 ~/.config/fgap/tokens/anthropic-bearer.txt
-```
-
-Restart the proxy once to pick up the config change; afterwards, swapping the token (e.g. switching to another subscription: rerun `claude setup-token` under the other account) is just overwriting the file — no restart.
-
-Compared with the `oauth2` route below, this keeps the whole OAuth dance inside first-party tooling — no authorize-URL / scope / state / User-Agent specifics to maintain, and no refresh windows to coordinate around. Tokens minted by `claude setup-token` carry the `user:inference` scope only: regular API and agent traffic (tool use, streaming, prompt caching) all works, while Claude Code features that demand a full login token (e.g. remote control, cloud review sessions) do not run through such a token.
-
-## Interactive OAuth2 login (fgap-oauth-login)
-
-For `http_proxy` services configured with `auth: oauth2`, the proxy needs a seeded token pair to refresh from. Run the login command on the **proxy host** (where a browser lives) once per service:
-
-```bash
-uv sync
-uv run fgap-oauth-login --config <path/to/config.json5> --service <service_name>
-```
-
-Flow:
-
-1. The command prints an authorization URL and opens it in your default browser. Sign in with the account whose subscription/organization should hold the token.
-2. After consent, the provider shows an authorization code (possibly as `code#state`). Paste it into the prompt; the state is verified.
-3. The command exchanges the code at the token endpoint and writes `<state_dir>/<service_name>.json` (owner-only). The proxy refreshes from this file thereafter.
-
-### Provider-specific known-good configs
-
-**Anthropic (`api.anthropic.com`)** — for fronting the Claude API in front of a coding-agent sandbox. With a Claude subscription, prefer the `claude setup-token` + `token_file` setup above (none of the wire-level pitfalls below apply to it); the oauth2 route remains for setups that need it:
-
-```json5
-"anthropic": {
-  "upstream": "https://api.anthropic.com",
-  "auth": "oauth2",
-  "streaming": true,
-  "forward_request_headers": ["anthropic-version", "anthropic-beta"],
-  "append_headers": { "anthropic-beta": "oauth-2025-04-20" },
-  "oauth2": {
-    "token_url": "https://platform.claude.com/v1/oauth/token",
-    "client_id": "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
-    "token_request_format": "json",
-    "login": {
-      "authorize_url": "https://claude.com/cai/oauth/authorize",
-      "redirect_uri": "https://platform.claude.com/oauth/code/callback",
-      "scope": "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload",
-      "extra_authorize_params": { "code": "true" }
-    }
-  }
-}
-```
-
-The wire-level details, verified in the field 2026-07-22:
-
-- The `authorize_url` is `claude.com/cai/…`, not `claude.ai/…` or `platform.claude.com/…`. The `platform.claude.com` authorize endpoint serves the org login flow and rejects individual-subscription users.
-- The `scope` on the *authorize* request must include `org:create_api_key` and `user:file_upload` even though the issued token's scope set is smaller — the authorize server rejects requests missing them.
-- The `state` parameter is 32 bytes of entropy (this is what `fgap-oauth-login` generates); anything shorter is rejected with "Invalid request format".
-- The token endpoint sits behind a CDN that blocks the default Python-urllib User-Agent (Cloudflare error 1010). `fgap-oauth-login` and the refresh path both send an explicit UA.
+- Config file must be `chmod 600` — checked at startup
+- Audit logging: CLI invocations logged with tool, resource, exit code; secrets masked in logs, emails masked in `/auth/status`
+- **Local network only**: the proxy has no authentication of its own — do not expose it to the internet
 
 ## License
 
