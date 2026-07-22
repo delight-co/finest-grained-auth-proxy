@@ -48,6 +48,8 @@ An `http_proxy` credential can name a file to read the token from instead of inl
 
 The file holds the token as a single line (surrounding whitespace is trimmed; keep it owner-only, `chmod 600`). It is re-read on **every request**, so writing a new token to the file rotates the credential with no restart. `token` and `token_file` are mutually exclusive per credential, and `token_file` works with the `bearer`, `basic`, and `header` auth modes. `GET /auth/status` reports whether each configured token file currently yields a token (`/health` is the bare liveness probe).
 
+Failure modes: a configured-but-missing or empty file answers with an actionable 502 that tells the operator what to fix. A `401` from the upstream means the token itself has expired or been revoked — static tokens have no refresh machinery, the proxy passes the upstream response through — so mint a new token and overwrite the file.
+
 ### Anthropic with a Claude subscription (`claude setup-token`)
 
 The simplest way to front the Claude API for a coding-agent sandbox: mint a long-lived token with Claude Code's own `claude setup-token` (requires a Claude subscription), save it to the token file, and configure a static bearer service:
