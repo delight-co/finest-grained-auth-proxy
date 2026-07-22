@@ -48,7 +48,11 @@ Auth modes:
   ``token_request_format: "json"`` switches the refresh POST from
   form-encoded (RFC 6749 §6, the default) to a JSON body for token
   endpoints that require it. Token state persists under ``state_dir``
-  (top-level plugin config, default ``/var/lib/fgap/tokens``).
+  (top-level plugin config, default ``/var/lib/fgap/tokens``) with
+  owner-only permissions. Seed it interactively on the proxy host with
+  ``fgap-oauth-login`` (see ``login.py``); if a refresh later fails
+  permanently, the proxy answers with an actionable 502 that tells the
+  operator exactly that.
 
 Config example::
 

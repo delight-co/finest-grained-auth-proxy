@@ -34,6 +34,35 @@ _EXPIRY_BUFFER_SECONDS = 30
 _DEFAULT_STATE_DIR = "/var/lib/fgap/tokens"
 
 
+def save_token_state(
+    state_dir: str,
+    service_name: str,
+    *,
+    access_token: str,
+    refresh_token: str,
+    expires_at: float,
+) -> str:
+    """Atomically write a token state file with owner-only permissions.
+
+    Returns the path written. Used by both the refresh path and the
+    interactive login command so the on-disk format stays in one place.
+    """
+    directory = state_dir or _DEFAULT_STATE_DIR
+    os.makedirs(directory, mode=0o700, exist_ok=True)
+    path = os.path.join(directory, f"{service_name}.json")
+    state = {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "expires_at": expires_at,
+    }
+    tmp = path + ".tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        json.dump(state, f)
+    os.replace(tmp, path)
+    return path
+
+
 class OAuth2TokenManager:
     """Manages OAuth2 tokens with automatic refresh.
 
@@ -239,17 +268,13 @@ class OAuth2TokenManager:
             return None
 
     def _save_state(self) -> None:
-        path = self._state_file()
         try:
-            os.makedirs(self._state_dir, exist_ok=True)
-            state = {
-                "access_token": self._access_token,
-                "refresh_token": self._refresh_token,
-                "expires_at": self._expires_at,
-            }
-            tmp = path + ".tmp"
-            with open(tmp, "w") as f:
-                json.dump(state, f)
-            os.replace(tmp, path)
+            save_token_state(
+                self._state_dir,
+                self.service_name,
+                access_token=self._access_token,
+                refresh_token=self._refresh_token,
+                expires_at=self._expires_at,
+            )
         except OSError as e:
             logger.warning("Failed to save token state for %s: %s", self.service_name, e)

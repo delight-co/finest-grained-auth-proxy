@@ -403,3 +403,66 @@ class TestTokenRequestFormat:
             },
         }}}, state_dir="/tmp/fgap-test-tokens")
         assert routes
+
+# =============================================================================
+# Token state file permissions and refresh-failure error body
+# =============================================================================
+
+
+class TestTokenStatePermissions:
+    async def test_state_file_owner_only(self, mock_token_server, tmp_path):
+        import stat
+
+        server, _state = mock_token_server
+        mgr = OAuth2TokenManager(
+            service_name="perms",
+            token_url=str(server.make_url("/token")),
+            client_id="cid",
+            client_secret="csec",
+            initial_refresh_token="rt",
+            state_dir=str(tmp_path / "tokens"),
+        )
+        await mgr.get_valid_token()
+
+        path = mgr._state_file()
+        assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
+        assert stat.S_IMODE(
+            os.stat(tmp_path / "tokens").st_mode
+        ) == 0o700
+
+
+class TestRefreshFailureErrorBody:
+    async def test_actionable_error_when_refresh_fails(
+        self, mock_token_server, tmp_path,
+    ):
+        import aiohttp
+        from aiohttp.test_utils import TestServer as _TestServer
+
+        server, state = mock_token_server
+        state["fail"] = True
+
+        config = {"services": {"llmapi": {
+            "upstream": "https://api.example.com",
+            "auth": "oauth2",
+            "oauth2": {
+                "token_url": str(server.make_url("/token")),
+                "client_id": "cid",
+                "refresh_token": "rt",
+            },
+        }}}
+        routes = make_routes(config, state_dir=str(tmp_path))
+        app = web.Application()
+        for method, path, handler in routes:
+            app.router.add_route(method, path, handler)
+
+        async with _TestServer(app) as proxy:
+            async with aiohttp.ClientSession() as session:
+                url = str(proxy.make_url("/proxy/llmapi/v1/x"))
+                async with session.get(url) as resp:
+                    assert resp.status == 502
+                    body = await resp.json()
+
+        assert body["type"] == "error"
+        message = body["error"]["message"]
+        assert "llmapi" in message
+        assert "fgap-oauth-login" in message

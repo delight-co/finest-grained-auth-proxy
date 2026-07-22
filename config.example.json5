@@ -172,7 +172,16 @@
         //   "oauth2": {
         //     "token_url": "https://console.anthropic.com/v1/oauth/token",
         //     "client_id": "YOUR_OAUTH_CLIENT_ID",  // no client_secret: public (PKCE) client
-        //     "token_request_format": "json"
+        //     "token_request_format": "json",
+        //     // Interactive seeding on the proxy host:
+        //     //   fgap-oauth-login --config <this file> --service anthropic
+        //     // (verify authorize params against your client's login URL)
+        //     "login": {
+        //       "authorize_url": "https://claude.ai/oauth/authorize",
+        //       "redirect_uri": "https://console.anthropic.com/oauth/code/callback",
+        //       "scope": "org:create_api_key user:profile user:inference",
+        //       "extra_authorize_params": { "code": "true" }
+        //     }
         //   }
         // }
         // See DESIGN.md / plugin.py docstring for bearer / basic / oauth2 examples
