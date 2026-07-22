@@ -119,6 +119,7 @@ gh discussion create -R owner/repo --title "..." --body "..." --category "Genera
 gh sub-issue list 123 -R owner/repo
 gh sub-issue add 100 200 -R owner/repo
 gh issue edit 123 --old "typo" --new "fixed" -R owner/repo
+gh issue close 123 --duplicate-of 456 -R owner/repo
 ```
 
 ### AWS read-only observability
