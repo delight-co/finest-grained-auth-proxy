@@ -26,5 +26,12 @@ fgap-langfuse = "fgap.client.langfuse:main"
 fgap-fly = "fgap.client.fly:main"
 fgap-aws = "fgap.client.aws:main"
 
+[tool.uv]
+# Without this, uv treats the project as "virtual" (no [build-system]
+# declared) and skips installing [project.scripts] entry points, so
+# `uv run fgap-oauth-login` in this repo fails with "Failed to spawn".
+# Consumers that pull fgap in as a dependency are unaffected either way.
+package = true
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
