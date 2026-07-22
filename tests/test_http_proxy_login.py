@@ -85,7 +85,11 @@ async def code_exchange_server():
             body = await request.json()
         else:
             body = dict(await request.post())
-        state["calls"].append({"content_type": ctype, "body": body})
+        state["calls"].append({
+            "content_type": ctype,
+            "body": body,
+            "user_agent": request.headers.get("User-Agent", ""),
+        })
         return web.json_response({
             "access_token": "at",
             "refresh_token": "rt",
@@ -188,3 +192,20 @@ class TestRunLogin:
         os.chmod(config_path, 0o600)
         with pytest.raises(SystemExit):
             run_login(str(config_path), "nope", open_browser=False)
+
+
+class TestExchangeCodeUserAgent:
+    async def test_user_agent_sent(self, code_exchange_server):
+        """Some token endpoints (Anthropic's) sit behind CDNs that reject
+        default library UAs; verify the explicit UA reaches the endpoint."""
+        server, state = code_exchange_server
+        await exchange_code(
+            token_url=str(server.make_url("/token")),
+            client_id="cid",
+            code="c0de",
+            verifier="v3rifier",
+            redirect_uri="https://cb.example.com",
+            state="st",
+        )
+        ua = state["calls"][-1].get("user_agent", "")
+        assert "claude-cli" in ua

@@ -130,26 +130,13 @@ fgap-aws --account my-account ecs describe-services --cluster c --services s
 fgap-aws --account my-account cloudwatch list-metrics --namespace ECS/ContainerInsights
 ```
 
-Only a curated read-only set per service is allowed (`logs`, `ecs`,
-`cloudwatch`, `ecr`). Denials name the reason: write operations,
-unsupported services (`ssm`, `secretsmanager`, ...), credential minting
-(`ecr get-login-password`), `--follow` streams, and `--profile` /
-`--endpoint-url` / `--debug` are all rejected at the proxy. The grant is
-account-wide per service — if multiple workloads share the account,
-reads span all of them. Pair the proxy-side credential with a read-only
-IAM principal ([aws-readonly-policy.example.json](./aws-readonly-policy.example.json))
-so the guarantee holds in two independent layers.
+Only a curated read-only set per service is allowed (`logs`, `ecs`, `cloudwatch`, `ecr`). Denials name the reason: write operations, unsupported services (`ssm`, `secretsmanager`, ...), credential minting (`ecr get-login-password`), `--follow` streams, and `--profile` / `--endpoint-url` / `--debug` are all rejected at the proxy. The grant is account-wide per service — if multiple workloads share the account, reads span all of them. Pair the proxy-side credential with a read-only IAM principal ([aws-readonly-policy.example.json](./aws-readonly-policy.example.json)) so the guarantee holds in two independent layers.
 
 ### S3-compatible storage
 
-No wrapper needed — point a stock S3 client at the proxy with dummy
-credentials. The proxy strips the dummy signature, enforces policy
-(bucket allow-list, deletion deny, immutable puts), re-signs with the
-real credentials, and streams to the upstream (AWS S3, Cloudflare R2,
-MinIO, ...).
+No wrapper needed — point a stock S3 client at the proxy with dummy credentials. The proxy strips the dummy signature, enforces policy (bucket allow-list, deletion deny, immutable puts), re-signs with the real credentials, and streams to the upstream (AWS S3, Cloudflare R2, MinIO, ...).
 
-`~/.aws/credentials` (values are placeholders on purpose — the real
-keys live on the proxy side):
+`~/.aws/credentials` (values are placeholders on purpose — the real keys live on the proxy side):
 
 ```ini
 [media]
@@ -256,26 +243,15 @@ Credentials are evaluated top-to-bottom. First match wins.
 
 ### GitHub App Credentials
 
-Instead of a PAT, a credential can reference a GitHub App. fgap signs a
-short-lived JWT with the App's private key, mints an installation access
-token (valid one hour), caches it, and re-mints before expiry — callers
-always see a fresh token, and the only long-lived secret is the key file.
+Instead of a PAT, a credential can reference a GitHub App. fgap signs a short-lived JWT with the App's private key, mints an installation access token (valid one hour), caches it, and re-mints before expiry — callers always see a fresh token, and the only long-lived secret is the key file.
 
 Why you might want this over a fine-grained PAT:
 
 - **Git LFS, as a safety net.** GitHub's LFS batch API used to reject fine-grained PATs (a long-standing platform limitation) — that's why App credentials were added. We've recently observed fine-grained PATs working for LFS in some setups: the proxy forwards the batch request, GitHub returns 200, and LFS objects download via a signed S3 URL that bypasses the proxy entirely. We don't fully understand why this works now (possibly a platform change). If you hit LFS failures with a fine-grained PAT, an App credential is the known-reliable fix.
-- **Narrowing at mint time.** `"repositories": "matched"` scopes every
-  minted token to the single repository that matched the credential's
-  resource patterns; a `"permissions"` map caps token permissions below
-  what the App is allowed. One App can serve many differently-scoped
-  credentials.
-- **No owner, no expiry surprises.** Tokens don't belong to a person and
-  the key doesn't expire; revocation and audit happen at the App level.
+- **Narrowing at mint time.** `"repositories": "matched"` scopes every minted token to the single repository that matched the credential's resource patterns; a `"permissions"` map caps token permissions below what the App is allowed. One App can serve many differently-scoped credentials.
+- **No owner, no expiry surprises.** Tokens don't belong to a person and the key doesn't expire; revocation and audit happen at the App level.
 
-Setup: create a GitHub App (only the permissions you need, webhook off),
-install it on the repositories you want to expose, note the App ID and
-the installation ID (the number at the end of the installation's URL),
-generate a private key, and point `private_key_path` at it.
+Setup: create a GitHub App (only the permissions you need, webhook off), install it on the repositories you want to expose, note the App ID and the installation ID (the number at the end of the installation's URL), generate a private key, and point `private_key_path` at it.
 
 ## Endpoints
 
@@ -323,6 +299,53 @@ Other limitations:
 - **`gh search *` is single-repo**: The wrapper consumes `--repo` for credential selection and re-injects it as a single `-R`, so cross-repo searches (no `--repo`, or multiple `--repo` flags) collapse to one repository
 - **`repo` positionals must come right after the subcommand**: `gh repo view owner/repo --json name` selects the credential for `owner/repo`; with flags first (`gh repo view --json name owner/repo`) the wrapper falls back to the cwd's git remote for credential selection. `owner/repo` and URL forms (`https://github.com/owner/repo`, `git@github.com:owner/repo.git`) are accepted
 - **Bare `repo` subcommands other than `view`**: `gh repo view` without an argument targets the cwd's remote; other bare invocations (e.g. `gh repo clone` with no argument) aren't supported because the proxy server has no local git context
+
+## Interactive OAuth2 login (fgap-oauth-login)
+
+For `http_proxy` services configured with `auth: oauth2`, the proxy needs a seeded token pair to refresh from. Run the login command on the **proxy host** (where a browser lives) once per service:
+
+```bash
+uv sync
+uv run fgap-oauth-login --config <path/to/config.json5> --service <service_name>
+```
+
+Flow:
+
+1. The command prints an authorization URL and opens it in your default browser. Sign in with the account whose subscription/organization should hold the token.
+2. After consent, the provider shows an authorization code (possibly as `code#state`). Paste it into the prompt; the state is verified.
+3. The command exchanges the code at the token endpoint and writes `<state_dir>/<service_name>.json` (owner-only). The proxy refreshes from this file thereafter.
+
+### Provider-specific known-good configs
+
+**Anthropic (`api.anthropic.com`)** — for fronting the Claude API in front of a coding-agent sandbox:
+
+```json5
+"anthropic": {
+  "upstream": "https://api.anthropic.com",
+  "auth": "oauth2",
+  "streaming": true,
+  "forward_request_headers": ["anthropic-version", "anthropic-beta"],
+  "append_headers": { "anthropic-beta": "oauth-2025-04-20" },
+  "oauth2": {
+    "token_url": "https://platform.claude.com/v1/oauth/token",
+    "client_id": "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
+    "token_request_format": "json",
+    "login": {
+      "authorize_url": "https://claude.com/cai/oauth/authorize",
+      "redirect_uri": "https://platform.claude.com/oauth/code/callback",
+      "scope": "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload",
+      "extra_authorize_params": { "code": "true" }
+    }
+  }
+}
+```
+
+The wire-level details, verified in the field 2026-07-22:
+
+- The `authorize_url` is `claude.com/cai/…`, not `claude.ai/…` or `platform.claude.com/…`. The `platform.claude.com` authorize endpoint serves the org login flow and rejects individual-subscription users.
+- The `scope` on the *authorize* request must include `org:create_api_key` and `user:file_upload` even though the issued token's scope set is smaller — the authorize server rejects requests missing them.
+- The `state` parameter is 32 bytes of entropy (this is what `fgap-oauth-login` generates); anything shorter is rejected with "Invalid request format".
+- The token endpoint sits behind a CDN that blocks the default Python-urllib User-Agent (Cloudflare error 1010). `fgap-oauth-login` and the refresh path both send an explicit UA.
 
 ## License
 

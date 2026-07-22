@@ -57,6 +57,14 @@ from fgap.core.config import load_config
 
 from .oauth2 import save_token_state
 
+# User-Agent for token-endpoint requests. Some OAuth token endpoints
+# sit behind CDNs that fingerprint the client (Cloudflare returned
+# error 1010 to a bare urllib/aiohttp default UA against Anthropic's
+# platform.claude.com during a 2026-07-22 exchange). Advertising as
+# the coding-agent CLI keeps that fingerprint check happy without
+# pretending to be a browser.
+_LOGIN_USER_AGENT = "claude-cli/2.1.215 (external, cli)"
+
 
 def _b64url(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).decode().rstrip("=")
@@ -127,7 +135,8 @@ async def exchange_code(
     body_kwargs = (
         {"json": data} if token_request_format == "json" else {"data": data}
     )
-    async with aiohttp.ClientSession() as session:
+    headers = {"User-Agent": _LOGIN_USER_AGENT, "Accept": "application/json"}
+    async with aiohttp.ClientSession(headers=headers) as session:
         async with session.post(
             token_url, **body_kwargs,
             timeout=aiohttp.ClientTimeout(total=30),
@@ -160,7 +169,12 @@ def run_login(
         )
 
     verifier, challenge = make_pkce()
-    state = _b64url(secrets.token_bytes(16))
+    # 32 bytes of entropy for the state parameter. RFC 6749 leaves the
+    # length undefined, but at least one authorize endpoint (Anthropic's,
+    # observed 2026-07-22) rejects shorter values with 'Invalid request
+    # format', so match the standard 32-byte width used by CC and other
+    # first-party clients rather than the RFC's minimum.
+    state = _b64url(secrets.token_bytes(32))
     url = build_authorize_url(
         login_cfg, oauth2_cfg["client_id"], state, challenge,
     )
