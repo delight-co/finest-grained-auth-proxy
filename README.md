@@ -311,7 +311,7 @@ An `http_proxy` credential can name a file to read the token from instead of inl
 ]
 ```
 
-The file holds the token as a single line (surrounding whitespace is trimmed; keep it owner-only, `chmod 600`). It is re-read on **every request**, so writing a new token to the file rotates the credential with no restart. `token` and `token_file` are mutually exclusive per credential, and `token_file` works with the `bearer`, `basic`, and `header` auth modes. `GET /health` reports whether each configured token file currently yields a token.
+The file holds the token as a single line (surrounding whitespace is trimmed; keep it owner-only, `chmod 600`). It is re-read on **every request**, so writing a new token to the file rotates the credential with no restart. `token` and `token_file` are mutually exclusive per credential, and `token_file` works with the `bearer`, `basic`, and `header` auth modes. `GET /auth/status` reports whether each configured token file currently yields a token (`/health` is the bare liveness probe).
 
 ### Anthropic with a Claude subscription (`claude setup-token`)
 
