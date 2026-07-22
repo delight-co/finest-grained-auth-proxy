@@ -559,6 +559,40 @@ def _has_help_flag(args: list[str]) -> bool:
     return any(a in ("--help", "-h") for a in args)
 
 
+# gh pr subcommands whose positional selector is ``[<number> | <url> |
+# <branch>]``. Stock gh infers the selector from the current branch when
+# it is missing; under the proxy the server-side gh has no checkout, so
+# the client injects the branch to preserve that behaviour. Skipped:
+# ``create`` (its own auto-inject block above), ``checkout`` / ``co``
+# (handled entirely client-side), ``status`` / ``list`` / ``search`` /
+# ``lock`` / ``unlock`` (no selector).
+_PR_BRANCH_SELECTOR_SUBCMDS = frozenset({
+    "checks", "close", "comment", "diff", "edit", "merge", "ready",
+    "reopen", "review", "update-branch", "view",
+})
+
+
+def _has_positional_selector(args: list[str]) -> bool:
+    """Return True if ``args`` contains a bareword positional selector.
+
+    Recognizes ``--flag=value`` as a self-contained token, treats a bare
+    ``--flag`` / ``-x`` as consuming the next token as its value, and
+    calls anything else a positional. Good enough to spot a PR
+    number / URL / branch after a subcommand — the ambiguity only bites
+    when a bareword follows a valueless flag, which does not happen in
+    the gh flag repertoire this branch covers.
+    """
+    prev_was_flag_expecting_value = False
+    for a in args:
+        if a.startswith("-"):
+            prev_was_flag_expecting_value = "=" not in a
+        elif prev_was_flag_expecting_value:
+            prev_was_flag_expecting_value = False
+        else:
+            return True
+    return False
+
+
 async def run(
     args: list[str],
     proxy_url: str,
@@ -677,6 +711,33 @@ async def run(
                 "detached).\n"
                 "Pass --head <owner>:<branch> explicitly, or run from a "
                 "checkout of the repository.",
+                file=sys.stderr,
+            )
+            return 1
+
+    # pr <subcmd> without a positional selector: stock gh would infer
+    # the target PR from the current branch, but the server-side gh has
+    # no checkout. Inject the current branch name (gh accepts a branch
+    # as the selector alongside -R) so ``gh pr merge`` etc. behave the
+    # same as stock. Fail with an actionable message if we cannot see a
+    # branch, mirroring ``pr create``.
+    if (
+        len(clean_args) >= 2
+        and clean_args[0] == "pr"
+        and clean_args[1] in _PR_BRANCH_SELECTOR_SUBCMDS
+        and not _has_help_flag(clean_args)
+        and not _has_positional_selector(clean_args[2:])
+    ):
+        branch = await _get_branch()
+        if branch:
+            clean_args.insert(2, branch)
+        else:
+            print(
+                "Error: could not determine the PR selector: no positional "
+                "argument was given and the current directory is not "
+                "inside a git repository (or HEAD is detached).\n"
+                "Pass a PR number, URL, or branch explicitly, or run from "
+                "a checkout of the repository.",
                 file=sys.stderr,
             )
             return 1
