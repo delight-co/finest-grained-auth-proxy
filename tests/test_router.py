@@ -226,7 +226,7 @@ class TestGhRepoFlagInjection:
     def gh_calls(self, monkeypatch):
         calls = []
 
-        async def fake_execute_cli(binary, args, env, timeout=None, stdin_data=None):
+        async def fake_execute_cli(binary, args, env, timeout=None, stdin_data=None, *, allowed_binaries=None):
             calls.append({"binary": binary, "args": args})
             return {"exit_code": 0, "stdout": "", "stderr": ""}
 

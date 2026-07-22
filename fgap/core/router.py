@@ -43,6 +43,13 @@ def find_plugin_for_tool(tool: str, plugins: dict[str, Plugin]) -> Plugin | None
     return None
 
 
+def _allowed_binaries(plugins: dict[str, Plugin]) -> frozenset[str]:
+    """Union of every registered plugin's advertised CLI tool names."""
+    return frozenset(
+        tool for plugin in plugins.values() for tool in plugin.tools
+    )
+
+
 def create_routes(config: dict, plugins: dict[str, Plugin]) -> web.Application:
     """Create aiohttp app with /cli and /health routes.
 
@@ -51,6 +58,8 @@ def create_routes(config: dict, plugins: dict[str, Plugin]) -> web.Application:
     # Plugin-owned config validation, fail-fast at startup. A config
     # section for a plugin that is not loaded is an error (the grants
     # it describes would silently not be enforced otherwise).
+    allowed_binaries = _allowed_binaries(plugins)
+
     plugin_sections = config.get("plugins", {})
     for section_name in plugin_sections:
         if section_name not in plugins:
@@ -167,7 +176,11 @@ def create_routes(config: dict, plugins: dict[str, Plugin]) -> web.Application:
             cli_args = args
             if tool == "gh" and cmd in GH_REPO_FLAG_COMMANDS:
                 cli_args = args + ["-R", resource]
-            result = await execute_cli(tool, cli_args, credential["env"], timeout=cli_timeout, stdin_data=stdin_data)
+            result = await execute_cli(
+                tool, cli_args, credential["env"],
+                timeout=cli_timeout, stdin_data=stdin_data,
+                allowed_binaries=allowed_binaries,
+            )
             logger.info(
                 "cli tool=%s resource=%s cmd=%s exit_code=%d",
                 tool, resource, cmd, result["exit_code"],

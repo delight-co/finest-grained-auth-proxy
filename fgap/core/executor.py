@@ -8,6 +8,8 @@ async def execute_cli(
     env_overrides: dict,
     timeout: int | None = None,
     stdin_data: str | None = None,
+    *,
+    allowed_binaries: frozenset[str],
 ) -> dict:
     """Execute a CLI command as an async subprocess.
 
@@ -20,7 +22,20 @@ async def execute_cli(
 
     Returns:
         {"exit_code": int, "stdout": str, "stderr": str}
+
+    Raises:
+        ValueError: if ``binary`` is not in ``allowed_binaries``. The set
+            must be supplied by the caller — this function is generic and
+            has no notion of which binaries are legal in a given
+            deployment; making the allowlist explicit at the call site
+            keeps the invariant local to the code that assembles it.
     """
+    if binary not in allowed_binaries:
+        raise ValueError(
+            f"execute_cli refused unknown binary {binary!r} "
+            f"(allowed: {sorted(allowed_binaries)})"
+        )
+
     env = {
         **os.environ,
         "GH_FORCE_TTY": "true",

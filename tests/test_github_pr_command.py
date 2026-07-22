@@ -76,7 +76,7 @@ class TestHelp:
         assert "gh pr edit help" in result["stdout"]
         assert "--old" in result["stdout"]
         assert "--new" in result["stdout"]
-        mock_cli.assert_called_once_with("gh", ["pr", "edit", "--help"], {}, timeout=10)
+        mock_cli.assert_called_once_with("gh", ["pr", "edit", "--help"], {}, timeout=10, allowed_binaries=frozenset({'gh'}))
 
     @patch("fgap.plugins.github.commands.issue.execute_cli", new_callable=AsyncMock)
     async def test_pr_comment_help_shows_edit(self, mock_cli):
