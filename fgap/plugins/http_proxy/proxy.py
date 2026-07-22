@@ -229,9 +229,21 @@ def make_routes(
 
         return resp
 
+    async def handle_service_head(request: web.Request) -> web.Response:
+        """Answer HEAD on the service base URL.
+
+        Some clients preflight their configured base URL with a bare
+        HEAD (Claude Code does at startup); acknowledge configured
+        services instead of 404ing.
+        """
+        if request.match_info["service"] not in services:
+            raise web.HTTPNotFound()
+        return web.Response()
+
     # Single route pattern handles all services and HTTP methods
     pattern = "/proxy/{service}/{path:.*}"
     return [
+        ("HEAD", "/proxy/{service}", handle_service_head),
         ("GET", pattern, handle_proxy),
         ("POST", pattern, handle_proxy),
         ("PUT", pattern, handle_proxy),

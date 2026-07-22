@@ -53,7 +53,7 @@ class TestMakeRoutes:
         config = {"services": {"test": {"upstream": "https://example.com"}}}
         routes = make_routes(config)
         methods = {r[0] for r in routes}
-        assert methods == {"GET", "POST", "PUT", "PATCH", "DELETE"}
+        assert methods == {"HEAD", "GET", "POST", "PUT", "PATCH", "DELETE"}
 
 
 # =============================================================================
@@ -550,3 +550,28 @@ class TestHeaderControls:
 
         errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
         assert errors == []
+
+
+# =============================================================================
+# HEAD preflight on the service base URL
+# =============================================================================
+
+
+class TestServiceHeadPreflight:
+    async def test_known_service_returns_200(self, proxy_app):
+        import aiohttp
+
+        proxy, _state = proxy_app
+        async with aiohttp.ClientSession() as session:
+            url = str(proxy.make_url("/proxy/testapi"))
+            async with session.head(url) as resp:
+                assert resp.status == 200
+
+    async def test_unknown_service_returns_404(self, proxy_app):
+        import aiohttp
+
+        proxy, _state = proxy_app
+        async with aiohttp.ClientSession() as session:
+            url = str(proxy.make_url("/proxy/nope"))
+            async with session.head(url) as resp:
+                assert resp.status == 404
