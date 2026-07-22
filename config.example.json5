@@ -1,3 +1,11 @@
+// ============================================================================
+// fgap config example — the source of truth for the config shape.
+// Every plugin and option belongs here, commented; adding a knob to the code
+// means adding it here in the same PR. Copy, fill, chmod 600.
+//
+// Credential arrays are evaluated top-to-bottom, first match wins.
+// Resource patterns: "owner/repo" exact, "owner/*" per owner, "*" everything.
+// ============================================================================
 {
   // Port for the proxy server (default: 8766)
   "port": 8766,
