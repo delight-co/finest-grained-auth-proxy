@@ -361,6 +361,177 @@ async def _handle_release_download(
 
 
 # =============================================================================
+# Issue Close as Duplicate (client-side)
+# =============================================================================
+
+
+def _parse_close_duplicate_args(
+    args: list[str],
+) -> tuple[str | None, str | None, str | None, str | None]:
+    """Parse the args passed to ``gh issue close`` for the duplicate path.
+
+    Returns ``(number, duplicate_of, reason, comment)`` where any of the
+    first three may be ``None`` if unspecified. ``comment`` is the value
+    of ``-c`` / ``--comment`` for the pre-close comment; ``None`` if not
+    given.
+    """
+    number: str | None = None
+    duplicate_of: str | None = None
+    reason: str | None = None
+    comment: str | None = None
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg == "--duplicate-of" and i + 1 < len(args):
+            duplicate_of = args[i + 1]
+            i += 2
+            continue
+        if arg.startswith("--duplicate-of="):
+            duplicate_of = arg[len("--duplicate-of="):]
+            i += 1
+            continue
+        if arg == "--reason" and i + 1 < len(args):
+            reason = args[i + 1]
+            i += 2
+            continue
+        if arg.startswith("--reason="):
+            reason = arg[len("--reason="):]
+            i += 1
+            continue
+        if arg in ("-c", "--comment") and i + 1 < len(args):
+            comment = args[i + 1]
+            i += 2
+            continue
+        if arg.startswith("--comment="):
+            comment = arg[len("--comment="):]
+            i += 1
+            continue
+        if not arg.startswith("-") and number is None:
+            number = arg
+        i += 1
+    return number, duplicate_of, reason, comment
+
+
+async def _handle_issue_close_duplicate(
+    args: list[str], resource: str, proxy_url: str,
+) -> int:
+    """Handle ``gh issue close <N> --duplicate-of <M>`` client-side.
+
+    Stock ``gh issue close`` only accepts ``--reason completed | not_planned``.
+    GitHub's REST API exposes a third value ``duplicate`` (public preview
+    since 2024-12) together with a ``duplicate_issue_id`` field pointing to
+    the canonical issue's numeric ID. Stitch the two together so callers
+    can close as duplicate through the proxy with a single command.
+
+    Flow:
+      1. Resolve the canonical issue number ``<M>`` to its numeric ID via
+         ``GET /repos/{resource}/issues/{M}`` (``duplicate_issue_id`` wants
+         an ID, not a number — a real gotcha).
+      2. If ``-c/--comment "..."`` is present, post it on ``<N>`` first
+         so the timeline order matches ``gh issue close -c ...``.
+      3. ``PATCH /repos/{resource}/issues/{N}`` with
+         ``state=closed``, ``state_reason=duplicate``,
+         ``duplicate_issue_id=<canonical id>``.
+    """
+    number, duplicate_of, reason, comment = _parse_close_duplicate_args(args)
+
+    if not number:
+        print("Error: issue number required", file=sys.stderr)
+        return 1
+    if reason and reason != "duplicate":
+        # This handler is only entered for the duplicate path; a
+        # non-duplicate reason here means the caller conflated flags.
+        print(
+            f"Error: --reason {reason} is incompatible with --duplicate-of",
+            file=sys.stderr,
+        )
+        return 1
+    if not duplicate_of:
+        # Only reachable when the caller wrote --reason duplicate without
+        # --duplicate-of. Ask for the canonical issue explicitly.
+        print(
+            "Error: --reason duplicate requires --duplicate-of <number>",
+            file=sys.stderr,
+        )
+        return 1
+
+    canonical = duplicate_of.lstrip("#")
+    if not canonical.isdigit():
+        # Cross-repo duplicates (owner/repo#N) are legal in GitHub's UI
+        # but need a different resource for the ID lookup. Punt for now
+        # with a message that names the missing feature.
+        print(
+            f"Error: --duplicate-of {duplicate_of!r} is not a plain issue "
+            f"number; cross-repo duplicates are not supported yet.",
+            file=sys.stderr,
+        )
+        return 1
+
+    async with ProxyClient(proxy_url) as client:
+        # 1. Look up the canonical issue's numeric ID.
+        try:
+            info = await client.call_cli(
+                "gh",
+                ["api", f"/repos/{resource}/issues/{canonical}"],
+                resource,
+            )
+        except (ConnectionError, ValueError) as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+        if info["exit_code"] != 0:
+            if info["stderr"]:
+                print(info["stderr"], file=sys.stderr)
+            return info["exit_code"]
+        try:
+            canonical_id = json.loads(info["stdout"])["id"]
+        except (json.JSONDecodeError, KeyError, TypeError) as e:
+            print(
+                f"Error: could not read canonical issue's id: {e}",
+                file=sys.stderr,
+            )
+            return 1
+
+        # 2. Optional pre-close comment (mirrors ``gh issue close -c``).
+        if comment:
+            try:
+                cr = await client.call_cli(
+                    "gh",
+                    ["issue", "comment", number, "-b", comment],
+                    resource,
+                )
+            except (ConnectionError, ValueError) as e:
+                print(f"Error: {e}", file=sys.stderr)
+                return 1
+            if cr["exit_code"] != 0:
+                if cr["stderr"]:
+                    print(cr["stderr"], file=sys.stderr)
+                return cr["exit_code"]
+
+        # 3. PATCH the duplicate close.
+        patch_args = [
+            "api", "-X", "PATCH",
+            f"/repos/{resource}/issues/{number}",
+            "-f", "state=closed",
+            "-f", "state_reason=duplicate",
+            "-F", f"duplicate_issue_id={canonical_id}",
+        ]
+        try:
+            result = await client.call_cli("gh", patch_args, resource)
+        except (ConnectionError, ValueError) as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+        if result["exit_code"] != 0:
+            if result["stderr"]:
+                print(result["stderr"], file=sys.stderr)
+            return result["exit_code"]
+
+    # Match stock gh's post-close line so this reads like a normal
+    # ``gh issue close`` in scripts.
+    print(f"✓ Closed issue #{number} as duplicate of #{canonical}")
+    return 0
+
+
+# =============================================================================
 # Argument Transformation
 # =============================================================================
 
@@ -808,6 +979,29 @@ async def run(
         )
         return await _handle_pr_checkout(
             checkout_args, resource, proxy_url, _git=_git,
+        )
+
+    # issue close --duplicate-of: stitch the REST 'state_reason=duplicate'
+    # + 'duplicate_issue_id' preview together so callers can close as
+    # duplicate through a single command (stock gh does not accept
+    # --reason duplicate yet — cli/cli#10786 tracks that upstream).
+    if (
+        len(clean_args) >= 2
+        and clean_args[0] == "issue"
+        and clean_args[1] == "close"
+        and not _has_help_flag(clean_args)
+        and (
+            any(a == "--duplicate-of" or a.startswith("--duplicate-of=")
+                for a in clean_args)
+            or "--reason=duplicate" in clean_args
+            or any(
+                clean_args[i] == "--reason" and clean_args[i + 1] == "duplicate"
+                for i in range(len(clean_args) - 1)
+            )
+        )
+    ):
+        return await _handle_issue_close_duplicate(
+            clean_args[2:], resource, proxy_url,
         )
 
     # release download: handle client-side (writes files to local disk)
