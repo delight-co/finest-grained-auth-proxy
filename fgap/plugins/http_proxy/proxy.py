@@ -12,9 +12,10 @@ import logging
 import urllib.parse
 
 import aiohttp
+import httpx
 from aiohttp import web
 
-from fgap.core.http import get_session
+from fgap.core.http import get_h2_client, get_session
 from fgap.plugins.base import match_resource
 
 logger = logging.getLogger(__name__)
@@ -158,19 +159,8 @@ def make_routes(
         header_name = service_config.get("header_name")
         forward_extra = tuple(service_config.get("forward_request_headers", ()))
         append_headers = service_config.get("append_headers", {})
-
-        # Long-lived upstreams (LLM APIs, SSE) outlive the shared
-        # session's total timeout; give them a per-request timeout that
-        # only guards connect and read-idle time.
-        timeout = None
-        if service_config.get("streaming"):
-            timeout = aiohttp.ClientTimeout(
-                total=None,
-                connect=30,
-                sock_read=float(
-                    service_config.get("stream_idle_timeout", 300)
-                ),
-            )
+        streaming = bool(service_config.get("streaming"))
+        stream_idle = float(service_config.get("stream_idle_timeout", 300))
 
         # Get token based on auth type
         if auth_type == "oauth2" and service in token_managers:
@@ -191,7 +181,8 @@ def make_routes(
             header_name=header_name,
             forward_request_headers=forward_extra,
             append_headers=append_headers,
-            timeout=timeout,
+            streaming=streaming,
+            stream_idle=stream_idle,
         )
 
         # Auto-retry on 401 for OAuth2 services. A streamed relay never
@@ -204,7 +195,8 @@ def make_routes(
                 request, upstream, path, token, "bearer", extra_headers,
                 forward_request_headers=forward_extra,
                 append_headers=append_headers,
-                timeout=timeout,
+                streaming=streaming,
+                stream_idle=stream_idle,
             )
 
         return resp
@@ -231,7 +223,8 @@ async def _proxy_request(
     header_name: str | None = None,
     forward_request_headers: tuple[str, ...] = (),
     append_headers: dict | None = None,
-    timeout: aiohttp.ClientTimeout | None = None,
+    streaming: bool = False,
+    stream_idle: float = 300,
 ) -> web.StreamResponse:
     upstream_url = f"{upstream}/{path}"
     if request.query_string:
@@ -278,16 +271,19 @@ async def _proxy_request(
 
     body = await request.read() if request.can_read_body else None
 
+    if streaming:
+        return await _proxy_request_h2(
+            request, upstream_url, headers, body, stream_idle,
+        )
+
     session = get_session()
     own_session = session is None
     if own_session:
         session = aiohttp.ClientSession()
     try:
-        request_kwargs: dict = {"headers": headers, "data": body}
-        if timeout is not None:
-            request_kwargs["timeout"] = timeout
         async with session.request(
-            request.method, upstream_url, **request_kwargs,
+            request.method, upstream_url,
+            headers=headers, data=body,
         ) as resp:
             content_type = resp.headers.get("Content-Type", "")
             if content_type.startswith("text/event-stream"):
@@ -307,6 +303,79 @@ async def _proxy_request(
     finally:
         if own_session:
             await session.close()
+
+
+async def _proxy_request_h2(
+    request: web.Request,
+    upstream_url: str,
+    headers: dict,
+    body: bytes | None,
+    stream_idle: float,
+) -> web.StreamResponse:
+    """Forward via the shared HTTP/2-capable client (httpx).
+
+    Streaming services take this path for two reasons: some upstream
+    edges only pass SSE through unbuffered on HTTP/2 (httpx negotiates
+    h2 via ALPN and falls back to HTTP/1.1 otherwise), and long-lived
+    requests must not be capped by a total timeout — only connect and
+    idle read time are guarded here.
+    """
+    timeout = httpx.Timeout(connect=30, read=stream_idle, write=30, pool=30)
+    client = get_h2_client()
+    own_client = client is None
+    if own_client:
+        client = httpx.AsyncClient(http2=True, timeout=None)
+    try:
+        async with client.stream(
+            request.method, upstream_url,
+            headers=headers, content=body, timeout=timeout,
+        ) as resp:
+            content_type = resp.headers.get("Content-Type", "")
+            if content_type.startswith("text/event-stream"):
+                return await _relay_stream_httpx(request, resp)
+            response_body = await resp.aread()
+            response_headers = {}
+            for h in _FORWARDED_RESPONSE_HEADERS:
+                value = resp.headers.get(h)
+                # httpx decodes content-encoding transparently, so the
+                # upstream Content-Length no longer matches the body.
+                if value is not None and h != "Content-Length":
+                    response_headers[h] = value
+            return web.Response(
+                body=response_body,
+                status=resp.status_code,
+                headers=response_headers,
+            )
+    finally:
+        if own_client:
+            await client.aclose()
+
+
+async def _relay_stream_httpx(
+    request: web.Request, resp: httpx.Response,
+) -> web.StreamResponse:
+    """Relay a text/event-stream httpx response without buffering."""
+    headers = {}
+    for h in _FORWARDED_RESPONSE_HEADERS:
+        value = resp.headers.get(h)
+        if value is not None and h not in _STREAMING_SKIP_RESPONSE_HEADERS:
+            headers[h] = value
+    headers.setdefault("Cache-Control", "no-cache")
+    headers["X-Accel-Buffering"] = "no"
+
+    stream = web.StreamResponse(status=resp.status_code, headers=headers)
+    await stream.prepare(request)
+    try:
+        async for chunk in resp.aiter_bytes():
+            await stream.write(chunk)
+        await stream.write_eof()
+    except ConnectionResetError:
+        # The downstream client hung up mid-stream — a consumer
+        # aborting an SSE response is normal, not an error. Returning
+        # here closes the upstream response, which stops the stream at
+        # its source.
+        logger.info("Streaming client disconnected, upstream closed")
+    return stream
 
 
 async def _relay_stream(

@@ -15,12 +15,13 @@ Streaming (SSE) support: when the upstream answers with
 chunk instead of buffered — this covers the SSE side of MCP Streamable
 HTTP and streaming LLM APIs behind the proxy. Streamed relays drop the
 upstream ``Content-Length``, default ``Cache-Control: no-cache``, and
-set ``X-Accel-Buffering: no`` for buffering intermediaries. Services
-whose requests outlive the shared client session's total timeout
-(streaming LLM calls) should set ``"streaming": true``, which switches
-that service to a per-request timeout with no total limit, a 30s
-connect limit, and an idle-read guard (``stream_idle_timeout``,
-default 300s).
+set ``X-Accel-Buffering: no`` for buffering intermediaries. Streaming upstreams
+(SSE MCP servers, LLM APIs) should set ``"streaming": true``: the
+service is then forwarded through an HTTP/2-capable client (some edges
+only pass SSE through unbuffered on h2; ALPN falls back to HTTP/1.1),
+with a per-request timeout that has no total limit — only a 30s
+connect limit and an idle-read guard (``stream_idle_timeout``, default
+300s), so long LLM calls are not capped.
 
 Per-service header controls:
 

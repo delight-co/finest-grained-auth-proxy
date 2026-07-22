@@ -135,9 +135,11 @@
     // text/event-stream responses (relayed chunk by chunk, not buffered).
     //
     // Streaming upstreams (SSE MCP servers, LLM APIs): set
-    // "streaming": true on the service so requests are not capped by the
-    // shared session's total timeout (connect 30s + idle-read guard,
-    // "stream_idle_timeout" seconds, default 300).
+    // "streaming": true on the service. Those requests go through an
+    // HTTP/2-capable client (some edges only pass SSE through
+    // unbuffered on h2) and are not capped by a total timeout —
+    // only connect (30s) and an idle-read guard
+    // ("stream_idle_timeout" seconds, default 300).
     "http_proxy": {
       // Where oauth2 token state (access/refresh token, expiry) is
       // persisted. Default: /var/lib/fgap/tokens

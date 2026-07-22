@@ -1,12 +1,15 @@
 import logging
 
 import aiohttp
+import httpx
 from aiohttp import web
 
 from fgap.core.config import ConfigError
 from fgap.core.credential import select_credential
 from fgap.core.executor import execute_cli
-from fgap.core.http import close_session, set_session
+from fgap.core.http import (
+    close_h2_client, close_session, set_h2_client, set_session,
+)
 from fgap.plugins.base import Plugin
 
 logger = logging.getLogger(__name__)
@@ -70,7 +73,11 @@ def create_routes(config: dict, plugins: dict[str, Plugin]) -> web.Application:
             timeout=aiohttp.ClientTimeout(total=http_timeout),
         )
         set_session(session)
+        # Streaming upstreams need HTTP/2 (some edges only pass SSE
+        # through unbuffered on h2); timeouts are set per request.
+        set_h2_client(httpx.AsyncClient(http2=True, timeout=None))
         yield
+        await close_h2_client()
         await close_session()
 
     app.cleanup_ctx.append(session_ctx)
