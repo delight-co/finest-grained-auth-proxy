@@ -62,11 +62,18 @@ class OAuth2TokenManager:
         employee_id: str = "",
         provider: str = "",
         refresh_api_token: str = "",
+        token_request_format: str = "form",
     ):
+        if token_request_format not in ("form", "json"):
+            raise ValueError(
+                f"token_request_format must be 'form' or 'json', "
+                f"got '{token_request_format}'"
+            )
         self.service_name = service_name
         self.token_url = token_url
         self.client_id = client_id
         self.client_secret = client_secret
+        self._token_request_format = token_request_format
         self._state_dir = state_dir
 
         # Delegated refresh config
@@ -126,14 +133,24 @@ class OAuth2TokenManager:
         data = {
             "grant_type": "refresh_token",
             "client_id": self.client_id,
-            "client_secret": self.client_secret,
             "refresh_token": self._refresh_token,
         }
+        # Public OAuth2 clients (PKCE) have no client secret; omit the
+        # key entirely so strict token endpoints don't reject the request.
+        if self.client_secret:
+            data["client_secret"] = self.client_secret
+
+        # Some token endpoints (e.g. Anthropic's) only accept a JSON body,
+        # the classic ones take form-encoded (RFC 6749 §6).
+        body_kwargs = (
+            {"json": data} if self._token_request_format == "json"
+            else {"data": data}
+        )
 
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 self.token_url,
-                data=data,
+                **body_kwargs,
                 timeout=aiohttp.ClientTimeout(total=15),
             ) as resp:
                 if resp.status != 200:
