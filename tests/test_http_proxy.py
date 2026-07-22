@@ -6,37 +6,38 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestServer
 
-from fgap.plugins.http_proxy.proxy import make_routes, _select_token
+from fgap.plugins.http_proxy.proxy import make_routes, _select_credential
 
 
 # =============================================================================
-# Token selection
+# Credential selection
 # =============================================================================
 
 
-class TestSelectToken:
+class TestSelectCredential:
     def test_wildcard(self):
         config = {"credentials": [{"token": "tok_1", "resources": ["*"]}]}
-        assert _select_token("default", config) == "tok_1"
+        assert _select_credential("default", config)["token"] == "tok_1"
 
     def test_first_match_wins(self):
         config = {"credentials": [
             {"token": "tok_specific", "resources": ["workspace-a"]},
             {"token": "tok_default", "resources": ["*"]},
         ]}
-        assert _select_token("workspace-a", config) == "tok_specific"
+        cred = _select_credential("workspace-a", config)
+        assert cred["token"] == "tok_specific"
 
     def test_no_match(self):
         config = {"credentials": [
             {"token": "tok_1", "resources": ["workspace-a"]},
         ]}
-        assert _select_token("workspace-b", config) is None
+        assert _select_credential("workspace-b", config) is None
 
     def test_empty_credentials(self):
-        assert _select_token("default", {"credentials": []}) is None
+        assert _select_credential("default", {"credentials": []}) is None
 
     def test_no_credentials_key(self):
-        assert _select_token("default", {}) is None
+        assert _select_credential("default", {}) is None
 
 
 # =============================================================================
@@ -338,6 +339,156 @@ class TestStartupValidation:
             "credentials": [{"token": "t", "resources": ["*"]}],
         }}})
         assert routes  # non-empty
+
+    def test_token_and_token_file_together_raise_at_startup(self):
+        with pytest.raises(ValueError, match="exactly one"):
+            make_routes({"services": {"svc": {
+                "upstream": "https://example.invalid",
+                "credentials": [
+                    {"token": "t", "token_file": "/x", "resources": ["*"]},
+                ],
+            }}})
+
+    def test_non_string_token_file_raises_at_startup(self):
+        with pytest.raises(ValueError, match="token_file"):
+            make_routes({"services": {"svc": {
+                "upstream": "https://example.invalid",
+                "credentials": [{"token_file": 123, "resources": ["*"]}],
+            }}})
+
+
+# =============================================================================
+# token_file credentials
+# =============================================================================
+
+
+def _token_file_proxy(upstream_url: str, token_file: str) -> TestServer:
+    """Proxy with a single bearer service whose token comes from a file."""
+    routes = make_routes({"services": {
+        "svc": {
+            "upstream": upstream_url,
+            "auth": "bearer",
+            "credentials": [
+                {"token_file": token_file, "resources": ["*"]},
+            ],
+        },
+    }})
+    app = web.Application()
+    for method, path, handler in routes:
+        app.router.add_route(method, path, handler)
+    return TestServer(app)
+
+
+class TestTokenFile:
+    async def _get(self, proxy: TestServer, path: str = "/proxy/svc/x"):
+        import aiohttp
+
+        async with aiohttp.ClientSession() as session:
+            async with session.get(str(proxy.make_url(path))) as resp:
+                return resp.status, await resp.read()
+
+    async def test_token_read_from_file_and_trimmed(
+        self, mock_upstream, tmp_path,
+    ):
+        server, state = mock_upstream
+        tok = tmp_path / "svc-token.txt"
+        tok.write_text("tok_from_file\n")
+        async with _token_file_proxy(
+            str(server.make_url("")), str(tok),
+        ) as proxy:
+            status, _ = await self._get(proxy)
+            assert status == 200
+
+        req = state["requests"][-1]
+        assert req["headers"]["Authorization"] == "Bearer tok_from_file"
+
+    async def test_file_reread_on_every_request(self, mock_upstream, tmp_path):
+        """Overwriting the file rotates the token without a restart."""
+        server, state = mock_upstream
+        tok = tmp_path / "svc-token.txt"
+        tok.write_text("first\n")
+        async with _token_file_proxy(
+            str(server.make_url("")), str(tok),
+        ) as proxy:
+            await self._get(proxy)
+            assert state["requests"][-1]["headers"]["Authorization"] == (
+                "Bearer first"
+            )
+            tok.write_text("second\n")
+            await self._get(proxy)
+            assert state["requests"][-1]["headers"]["Authorization"] == (
+                "Bearer second"
+            )
+
+    async def test_missing_file_returns_actionable_502(
+        self, mock_upstream, tmp_path,
+    ):
+        server, _state = mock_upstream
+        missing = tmp_path / "nope.txt"
+        async with _token_file_proxy(
+            str(server.make_url("")), str(missing),
+        ) as proxy:
+            status, body = await self._get(proxy)
+            assert status == 502
+            error = json.loads(body)["error"]
+            assert error["type"] == "api_error"
+            assert "token_file" in error["message"]
+            assert str(missing) in error["message"]
+
+    async def test_empty_file_returns_actionable_502(
+        self, mock_upstream, tmp_path,
+    ):
+        server, _state = mock_upstream
+        tok = tmp_path / "svc-token.txt"
+        tok.write_text("\n")
+        async with _token_file_proxy(
+            str(server.make_url("")), str(tok),
+        ) as proxy:
+            status, body = await self._get(proxy)
+            assert status == 502
+            assert "empty" in json.loads(body)["error"]["message"]
+
+    async def test_tilde_expands_to_home(
+        self, mock_upstream, tmp_path, monkeypatch,
+    ):
+        server, state = mock_upstream
+        monkeypatch.setenv("HOME", str(tmp_path))
+        (tmp_path / "tok.txt").write_text("home_tok\n")
+        async with _token_file_proxy(
+            str(server.make_url("")), "~/tok.txt",
+        ) as proxy:
+            status, _ = await self._get(proxy)
+            assert status == 200
+
+        req = state["requests"][-1]
+        assert req["headers"]["Authorization"] == "Bearer home_tok"
+
+
+class TestHealthCheckTokenFiles:
+    async def test_token_file_readability_reported(self, tmp_path):
+        from fgap.plugins.http_proxy.plugin import HttpProxyPlugin
+
+        ok = tmp_path / "ok.txt"
+        ok.write_text("tok\n")
+        config = {"services": {
+            "good": {"upstream": "https://x", "credentials": [
+                {"token_file": str(ok), "resources": ["*"]},
+            ]},
+            "bad": {"upstream": "https://x", "credentials": [
+                {"token_file": str(tmp_path / "missing.txt"),
+                 "resources": ["*"]},
+            ]},
+            "inline": {"upstream": "https://x", "credentials": [
+                {"token": "t", "resources": ["*"]},
+            ]},
+        }}
+        results = await HttpProxyPlugin().health_check(config)
+        by_name = {r["service"]: r for r in results}
+        assert by_name["good"]["token_files"] == [
+            {"path": str(ok), "readable": True},
+        ]
+        assert by_name["bad"]["token_files"][0]["readable"] is False
+        assert "token_files" not in by_name["inline"]
 
 
 # =============================================================================

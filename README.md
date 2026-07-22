@@ -28,7 +28,7 @@ CLI tools (gh, gog) / GitHub API / github.com (git)
 | Google | `gog` | Gmail, Calendar, Sheets, Docs, Drive, Contacts |
 | Fly.io | `fly` / `flyctl` | App management via proxy-side flyctl; deploy/logs/ssh via logged per-app token handout |
 | AWS | `fgap-aws` | Read-only observability (CloudWatch logs / metrics, ECS, ECR) via a curated allowlist; secret-bearing reads and credential minting denied |
-| HTTP | stock `curl` | Generic forward proxy for authenticated HTTP APIs (`bearer` / `basic` / `header` / `oauth2` auth); passes MCP Streamable HTTP traffic when the server replies with JSON (`initialize`, `tools/list`, kick-and-poll tools). SSE responses (`text/event-stream`, GET SSE stream) are not supported yet — the response body is buffered |
+| HTTP | stock `curl` | Generic forward proxy for authenticated HTTP APIs (`bearer` / `basic` / `header` / `oauth2` auth); passes MCP Streamable HTTP traffic. SSE responses (`text/event-stream`) are relayed without buffering — set `"streaming": true` on SSE/LLM services |
 | S3 | stock `aws` / `rclone` | S3-compatible storage (AWS S3, Cloudflare R2, MinIO) via SigV4 re-signing; bucket allow-list, deletion deny, immutable puts |
 
 ## Quick Start
@@ -301,6 +301,49 @@ Other limitations:
 - **`repo` positionals must come right after the subcommand**: `gh repo view owner/repo --json name` selects the credential for `owner/repo`; with flags first (`gh repo view --json name owner/repo`) the wrapper falls back to the cwd's git remote for credential selection. `owner/repo` and URL forms (`https://github.com/owner/repo`, `git@github.com:owner/repo.git`) are accepted
 - **Bare `repo` subcommands other than `view`**: `gh repo view` without an argument targets the cwd's remote; other bare invocations (e.g. `gh repo clone` with no argument) aren't supported because the proxy server has no local git context
 
+## Static bearer tokens from a file (`token_file`)
+
+An `http_proxy` credential can name a file to read the token from instead of inlining it:
+
+```json5
+"credentials": [
+  { "token_file": "~/.config/fgap/tokens/anthropic-bearer.txt", "resources": ["*"] }
+]
+```
+
+The file holds the token as a single line (surrounding whitespace is trimmed; keep it owner-only, `chmod 600`). It is re-read on **every request**, so writing a new token to the file rotates the credential with no restart. `token` and `token_file` are mutually exclusive per credential, and `token_file` works with the `bearer`, `basic`, and `header` auth modes. `GET /health` reports whether each configured token file currently yields a token.
+
+### Anthropic with a Claude subscription (`claude setup-token`)
+
+The simplest way to front the Claude API for a coding-agent sandbox: mint a long-lived token with Claude Code's own `claude setup-token` (requires a Claude subscription), save it to the token file, and configure a static bearer service:
+
+```json5
+"anthropic": {
+  "upstream": "https://api.anthropic.com",
+  "auth": "bearer",
+  "streaming": true,
+  "forward_request_headers": ["anthropic-version", "anthropic-beta"],
+  "append_headers": { "anthropic-beta": "oauth-2025-04-20" },
+  "credentials": [
+    { "token_file": "~/.config/fgap/tokens/anthropic-bearer.txt", "resources": ["*"] }
+  ]
+}
+```
+
+Setup on the proxy host:
+
+```bash
+claude setup-token   # sign in with the subscription that should hold the token
+mkdir -p ~/.config/fgap/tokens
+# paste the printed sk-ant-oat01-… token into the file:
+printf '%s\n' 'sk-ant-oat01-REPLACE_ME' > ~/.config/fgap/tokens/anthropic-bearer.txt
+chmod 600 ~/.config/fgap/tokens/anthropic-bearer.txt
+```
+
+Restart the proxy once to pick up the config change; afterwards, swapping the token (e.g. switching to another subscription: rerun `claude setup-token` under the other account) is just overwriting the file — no restart.
+
+Compared with the `oauth2` route below, this keeps the whole OAuth dance inside first-party tooling — no authorize-URL / scope / state / User-Agent specifics to maintain, and no refresh windows to coordinate around. Tokens minted by `claude setup-token` carry the `user:inference` scope only: regular API and agent traffic (tool use, streaming, prompt caching) all works, while Claude Code features that demand a full login token (e.g. remote control, cloud review sessions) do not run through such a token.
+
 ## Interactive OAuth2 login (fgap-oauth-login)
 
 For `http_proxy` services configured with `auth: oauth2`, the proxy needs a seeded token pair to refresh from. Run the login command on the **proxy host** (where a browser lives) once per service:
@@ -318,7 +361,7 @@ Flow:
 
 ### Provider-specific known-good configs
 
-**Anthropic (`api.anthropic.com`)** — for fronting the Claude API in front of a coding-agent sandbox:
+**Anthropic (`api.anthropic.com`)** — for fronting the Claude API in front of a coding-agent sandbox. With a Claude subscription, prefer the `claude setup-token` + `token_file` setup above (none of the wire-level pitfalls below apply to it); the oauth2 route remains for setups that need it:
 
 ```json5
 "anthropic": {
