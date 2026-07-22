@@ -9,14 +9,16 @@ Successor to [fgp](https://github.com/carrotRakko/github-finest-grained-permissi
 ## How It Works
 
 ```
-Sandbox (fgap-gh / fgap-gog wrappers)
+Sandbox (fgap-* CLI wrappers · git · stock curl / S3 clients)
     | HTTP
 Proxy server (fgap)
     | credential injection
-CLI tools (gh, gog) / GitHub API / github.com (git)
+CLI tools (gh, gog, notion, langfuse, flyctl, aws)
+  · github.com (git smart HTTP) · upstream HTTP APIs · S3-compatible storage
 ```
 
-- Wrappers replace `gh` and `gog` inside the sandbox
+- CLI wrappers (`fgap-gh`, `fgap-gog`, `fgap-notion`, `fgap-langfuse`, `fgap-fly`, `fgap-aws`) replace their CLIs inside the sandbox
+- git, `curl`, and stock S3 clients need no wrapper — they point at proxy URLs (`/git/...`, `/proxy/...`, `/s3/...`)
 - The proxy selects the appropriate credential based on resource patterns
 - Credentials never enter the sandbox environment
 
@@ -28,6 +30,8 @@ CLI tools (gh, gog) / GitHub API / github.com (git)
 | Google | `gog` | Gmail, Calendar, Sheets, Docs, Drive, Contacts |
 | Fly.io | `fly` / `flyctl` | App management via proxy-side flyctl; deploy/logs/ssh via logged per-app token handout |
 | AWS | `fgap-aws` | Read-only observability (CloudWatch logs / metrics, ECS, ECR) via a curated allowlist; secret-bearing reads and credential minting denied |
+| Langfuse | `langfuse` | LLM tracing / prompts via per-project API keys; per-entry `read` / `write` permission grammar enforced at the proxy |
+| Notion | `notion` | Notion API via [notion-cli](https://github.com/4ier/notion-cli); the Internal Integration Token stays proxy-side |
 | HTTP | stock `curl` | Generic forward proxy for authenticated HTTP APIs (`bearer` / `basic` / `header` / `oauth2` auth); passes MCP Streamable HTTP traffic. SSE responses (`text/event-stream`) are relayed without buffering — set `"streaming": true` on SSE/LLM services |
 | S3 | stock `aws` / `rclone` | S3-compatible storage (AWS S3, Cloudflare R2, MinIO) via SigV4 re-signing; bucket allow-list, deletion deny, immutable puts |
 
@@ -45,7 +49,7 @@ See [config.example.json5](config.example.json5) for all options.
 
 ### 2. Start the Proxy
 
-Requires [gh](https://cli.github.com/), [gog](https://github.com/steipete/gogcli) and/or [flyctl](https://fly.io/docs/flyctl/) installed on the host, depending on which plugins you use.
+The proxy shells out to the real CLIs, so install the ones your config enables on the host: [gh](https://cli.github.com/), [gog](https://github.com/steipete/gogcli), [flyctl](https://fly.io/docs/flyctl/), [aws](https://docs.aws.amazon.com/cli/), langfuse, [notion](https://github.com/4ier/notion-cli). The `http_proxy` and `s3` plugins need no host CLI.
 
 ```bash
 uv run python main.py --config config.json5
@@ -68,12 +72,14 @@ kill $(cat /tmp/fgap.pid)
 ### 3. Install Wrappers (Sandbox Side)
 
 ```bash
-# Install fgap-gh and fgap-gog
+# Install the fgap package (ships all wrappers as entry points)
 curl -fsSL https://raw.githubusercontent.com/delight-co/finest-grained-auth-proxy/main/install.sh | bash
 
-# Or replace gh/gog entirely
+# Or additionally replace gh/gog with symlinks to their wrappers
 curl -fsSL https://raw.githubusercontent.com/delight-co/finest-grained-auth-proxy/main/install.sh | bash -s -- --replace
 ```
+
+The package install provides `fgap-gh`, `fgap-gog`, `fgap-notion`, `fgap-langfuse`, `fgap-fly`, `fgap-aws` (and the host-side `fgap-oauth-login`). `--replace` symlinks `gh` and `gog` only; to shadow the other CLIs, add symlinks the same way (e.g. `sudo ln -s "$(command -v fgap-fly)" /usr/local/bin/fly`).
 
 Set the proxy URL if not on localhost:
 
@@ -262,8 +268,10 @@ Setup: create a GitHub App (only the permissions you need, webhook off), install
 | `GET /git/{owner}/{repo}.git/...` | Git smart HTTP proxy |
 | `ANY /proxy/{service}/...` | Generic HTTP forward proxy with credential injection |
 | `ANY /s3/{service}/{bucket}/{key}` | S3-compatible storage proxy with SigV4 re-signing |
+| `POST /download` | Proxy-authenticated file download (`gh release download` and similar file-streaming commands) |
 | `GET /health` | Lightweight health check (for Docker HEALTHCHECK) |
 | `GET /auth/status` | Credential validity check (for debugging) |
+| `GET /processes` | Managed local processes status |
 
 ## Security
 
@@ -276,16 +284,12 @@ Setup: create a GitHub App (only the permissions you need, webhook off), install
 
 ## Limitations
 
-All commands require a resource (owner/repo) to select the right credential. Commands that aren't repo-scoped won't work:
+Every invocation runs under a credential selected by resource: the client resolves it from `-R owner/repo`, a repo positional, the API endpoint path, or the cwd's git remote — and refuses with "Could not determine repository" when none is found.
 
-| Blocked command | Reason |
-|----------------|--------|
-| `gh gist *` | User-scoped, no repo context |
-| `gh status` | User dashboard (cross-repo) |
-| `gh ssh-key *` / `gh gpg-key *` | User-scoped |
-| `gh codespace *` | User-scoped |
-| `gh api /user`, `/orgs/...`, `/search/...` | Non-`repos/` endpoints — no repo to match |
-| `gh api graphql` | Raw GraphQL blocked — use high-level commands (issue, pr, discussion, sub-issue) |
+Consequences for commands that aren't repo-scoped:
+
+- User-scoped commands (`gh gist`, `gh status`, `gh api /user`, `/orgs/...`, ...) are not blocked — they execute under whichever credential the detected resource selects. Results reflect that token's identity and grants (a fine-grained PAT scoped to repos typically lacks user-scoped permissions), so pick the repo to pick the credential.
+- `gh api graphql` is deliberately blocked by the client — use the high-level commands (issue, pr, discussion, sub-issue) instead.
 
 Credential-leaking commands, denied regardless of resource:
 
