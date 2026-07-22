@@ -131,12 +131,17 @@
     // Auth modes: "bearer" / "basic" / "header" (arbitrary header name,
     // e.g. for x-api-key-style APIs including MCP servers) / "oauth2".
     //
-    // MCP support: passes MCP Streamable HTTP traffic when the server
-    // replies with JSON (initialize, tools/list, kick-and-poll tools).
-    // Servers that stream events over long text/event-stream responses
-    // (or the GET SSE stream) are NOT supported yet — the response body
-    // is buffered before it is returned to the client.
+    // MCP support: passes MCP Streamable HTTP traffic, including
+    // text/event-stream responses (relayed chunk by chunk, not buffered).
+    //
+    // Streaming upstreams (SSE MCP servers, LLM APIs): set
+    // "streaming": true on the service so requests are not capped by the
+    // shared session's total timeout (connect 30s + idle-read guard,
+    // "stream_idle_timeout" seconds, default 300).
     "http_proxy": {
+      // Where oauth2 token state (access/refresh token, expiry) is
+      // persisted. Default: /var/lib/fgap/tokens
+      // "state_dir": "/var/lib/fgap/tokens",
       "services": {
         "some_mcp": {
           "upstream": "https://mcp.example.com",
@@ -146,6 +151,28 @@
             { "token": "sk_YOUR_KEY", "resources": ["*"] }
           ]
         }
+        // Streaming LLM API with OAuth2 refresh — e.g. the Anthropic
+        // API in front of a Claude Code container: the container runs
+        // with ANTHROPIC_BASE_URL={proxy}/proxy/anthropic and
+        // ANTHROPIC_AUTH_TOKEN=dummy, so the real credential never
+        // enters the sandbox. Seed the token state file (state_dir/
+        // anthropic.json: {"access_token", "refresh_token",
+        // "expires_at"}) and the proxy refreshes from there.
+        // "anthropic": {
+        //   "upstream": "https://api.anthropic.com",
+        //   "auth": "oauth2",
+        //   "streaming": true,
+        //   // forward the client's own protocol headers…
+        //   "forward_request_headers": ["anthropic-version", "anthropic-beta"],
+        //   // …and pin required flags without clobbering them
+        //   // (comma-merged into the client's value):
+        //   "append_headers": { "anthropic-beta": "oauth-2025-04-20" },
+        //   "oauth2": {
+        //     "token_url": "https://console.anthropic.com/v1/oauth/token",
+        //     "client_id": "YOUR_OAUTH_CLIENT_ID",  // no client_secret: public (PKCE) client
+        //     "token_request_format": "json"
+        //   }
+        // }
         // See DESIGN.md / plugin.py docstring for bearer / basic / oauth2 examples
       }
     },

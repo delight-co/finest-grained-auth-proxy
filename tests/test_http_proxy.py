@@ -338,3 +338,215 @@ class TestStartupValidation:
             "credentials": [{"token": "t", "resources": ["*"]}],
         }}})
         assert routes  # non-empty
+
+
+# =============================================================================
+# Streaming (SSE) relay
+# =============================================================================
+
+
+@pytest.fixture
+async def sse_upstream():
+    """Mock upstream that streams SSE events, gated by an asyncio.Event."""
+    import asyncio
+
+    app = web.Application()
+    state = {"release": asyncio.Event(), "requests": []}
+
+    async def handle_events(request: web.Request):
+        state["requests"].append({"headers": dict(request.headers)})
+        resp = web.StreamResponse(
+            status=200,
+            headers={"Content-Type": "text/event-stream"},
+        )
+        await resp.prepare(request)
+        await resp.write(b"event: one\ndata: {}\n\n")
+        await state["release"].wait()
+        await resp.write(b"event: two\ndata: {}\n\n")
+        await resp.write_eof()
+        return resp
+
+    async def handle_json(request: web.Request):
+        return web.json_response({"ok": True})
+
+    app.router.add_post("/events", handle_events)
+    app.router.add_get("/json", handle_json)
+    async with TestServer(app) as server:
+        yield server, state
+
+
+@pytest.fixture
+async def sse_proxy(sse_upstream):
+    """fgap http_proxy in front of the SSE upstream, streaming enabled."""
+    server, state = sse_upstream
+    config = {
+        "services": {
+            "llm": {
+                "upstream": str(server.make_url("")),
+                "auth": "bearer",
+                "streaming": True,
+                "credentials": [{"token": "tok", "resources": ["*"]}],
+            },
+        },
+    }
+    routes = make_routes(config)
+    app = web.Application()
+    for method, path, handler in routes:
+        app.router.add_route(method, path, handler)
+    async with TestServer(app) as proxy_server:
+        yield proxy_server, state
+
+
+class TestStreamingRelay:
+    async def test_sse_relayed_incrementally(self, sse_proxy):
+        """First event must arrive while the upstream is still open —
+        a buffering implementation would block until the stream ends."""
+        import asyncio
+
+        import aiohttp
+
+        proxy, state = sse_proxy
+        url = str(proxy.make_url("/proxy/llm/events"))
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url) as resp:
+                assert resp.status == 200
+                ctype = resp.headers.get("Content-Type", "")
+                assert ctype.startswith("text/event-stream")
+                assert resp.headers.get("X-Accel-Buffering") == "no"
+                assert "Content-Length" not in resp.headers
+
+                first = await asyncio.wait_for(
+                    resp.content.readany(), timeout=5,
+                )
+                assert b"event: one" in first
+                assert b"event: two" not in first
+
+                state["release"].set()
+                rest = await asyncio.wait_for(resp.read(), timeout=5)
+                assert b"event: two" in rest
+
+    async def test_non_sse_response_stays_buffered(self, sse_proxy):
+        import aiohttp
+
+        proxy, state = sse_proxy
+        url = str(proxy.make_url("/proxy/llm/json"))
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as resp:
+                assert resp.status == 200
+                data = await resp.json()
+                assert data["ok"] is True
+
+
+# =============================================================================
+# Per-service header controls
+# =============================================================================
+
+
+@pytest.fixture
+async def header_proxy(mock_upstream):
+    """Proxy with forward_request_headers / append_headers configured."""
+    server, state = mock_upstream
+    upstream_url = str(server.make_url(""))
+    config = {
+        "services": {
+            "plain": {
+                "upstream": upstream_url,
+                "auth": "bearer",
+                "credentials": [{"token": "tok", "resources": ["*"]}],
+            },
+            "tuned": {
+                "upstream": upstream_url,
+                "auth": "bearer",
+                "forward_request_headers": [
+                    "anthropic-version", "anthropic-beta",
+                ],
+                "append_headers": {"anthropic-beta": "oauth-2025-04-20"},
+                "credentials": [{"token": "tok", "resources": ["*"]}],
+            },
+        },
+    }
+    routes = make_routes(config)
+    app = web.Application()
+    for method, path, handler in routes:
+        app.router.add_route(method, path, handler)
+    async with TestServer(app) as proxy_server:
+        yield proxy_server, state
+
+
+class TestHeaderControls:
+    async def _get(self, proxy, service, headers):
+        import aiohttp
+
+        async with aiohttp.ClientSession() as session:
+            url = str(proxy.make_url(f"/proxy/{service}/x"))
+            async with session.get(url, headers=headers) as resp:
+                assert resp.status == 200
+
+    async def test_extra_forward_header(self, header_proxy):
+        proxy, state = header_proxy
+        await self._get(proxy, "tuned", {"anthropic-version": "2023-06-01"})
+        req = state["requests"][-1]
+        assert req["headers"].get("anthropic-version") == "2023-06-01"
+
+    async def test_unlisted_header_not_forwarded(self, header_proxy):
+        proxy, state = header_proxy
+        await self._get(proxy, "plain", {"anthropic-version": "2023-06-01"})
+        req = state["requests"][-1]
+        assert "anthropic-version" not in req["headers"]
+
+    async def test_append_header_set_when_absent(self, header_proxy):
+        proxy, state = header_proxy
+        await self._get(proxy, "tuned", {})
+        req = state["requests"][-1]
+        assert req["headers"].get("anthropic-beta") == "oauth-2025-04-20"
+
+    async def test_append_header_merged_with_client_value(self, header_proxy):
+        proxy, state = header_proxy
+        await self._get(proxy, "tuned", {"anthropic-beta": "context-1m"})
+        req = state["requests"][-1]
+        assert req["headers"].get("anthropic-beta") == (
+            "context-1m,oauth-2025-04-20"
+        )
+
+    async def test_append_header_not_duplicated(self, header_proxy):
+        proxy, state = header_proxy
+        await self._get(
+            proxy, "tuned", {"anthropic-beta": "oauth-2025-04-20"},
+        )
+        req = state["requests"][-1]
+        assert req["headers"].get("anthropic-beta") == "oauth-2025-04-20"
+
+    async def test_config_validation_rejects_bad_types(self):
+        with pytest.raises(ValueError):
+            make_routes({"services": {"bad": {
+                "upstream": "https://x", "forward_request_headers": "nope",
+            }}})
+        with pytest.raises(ValueError):
+            make_routes({"services": {"bad": {
+                "upstream": "https://x", "append_headers": ["nope"],
+            }}})
+
+    async def test_client_abort_mid_stream_is_not_an_error(
+        self, sse_proxy, caplog,
+    ):
+        """A client hanging up mid-stream must not raise through the
+        handler (consumer aborts are routine for SSE)."""
+        import asyncio
+        import logging
+
+        import aiohttp
+
+        proxy, state = sse_proxy
+        url = str(proxy.make_url("/proxy/llm/events"))
+        with caplog.at_level(logging.ERROR):
+            session = aiohttp.ClientSession()
+            resp = await session.post(url)
+            first = await asyncio.wait_for(resp.content.readany(), timeout=5)
+            assert b"event: one" in first
+            # Abort without reading the rest, then let the relay notice.
+            await session.close()
+            state["release"].set()
+            await asyncio.sleep(0.1)
+
+        errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
+        assert errors == []

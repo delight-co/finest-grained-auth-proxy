@@ -294,3 +294,112 @@ class TestHttpProxyOAuth2Integration:
                 # handle_401 forces refresh → good_token → 200
                 assert resp.status == 200
         assert upstream_state["requests"][-1]["auth"] == "Bearer good_token"
+
+
+# =============================================================================
+# Token request format (json vs form) and public clients
+# =============================================================================
+
+
+@pytest.fixture
+async def recording_token_server():
+    """Token endpoint that records content type and parsed body."""
+    app = web.Application()
+    state = {"calls": []}
+
+    async def handle_token(request: web.Request):
+        ctype = request.headers.get("Content-Type", "")
+        if ctype.startswith("application/json"):
+            body = await request.json()
+        else:
+            body = dict(await request.post())
+        state["calls"].append({"content_type": ctype, "body": body})
+        return web.json_response({
+            "access_token": "at",
+            "refresh_token": "rt2",
+            "expires_in": 3600,
+        })
+
+    app.router.add_post("/token", handle_token)
+    async with TestServer(app) as server:
+        yield server, state
+
+
+class TestTokenRequestFormat:
+    async def test_json_body_without_client_secret(
+        self, recording_token_server, tmp_path,
+    ):
+        server, state = recording_token_server
+        mgr = OAuth2TokenManager(
+            service_name="jsonfmt",
+            token_url=str(server.make_url("/token")),
+            client_id="public-client",
+            client_secret="",
+            initial_refresh_token="rt1",
+            state_dir=str(tmp_path),
+            token_request_format="json",
+        )
+        await mgr.get_valid_token()
+
+        call = state["calls"][-1]
+        assert call["content_type"].startswith("application/json")
+        assert call["body"]["grant_type"] == "refresh_token"
+        assert call["body"]["client_id"] == "public-client"
+        assert call["body"]["refresh_token"] == "rt1"
+        assert "client_secret" not in call["body"]
+
+    async def test_form_body_omits_empty_client_secret(
+        self, recording_token_server, tmp_path,
+    ):
+        server, state = recording_token_server
+        mgr = OAuth2TokenManager(
+            service_name="formfmt",
+            token_url=str(server.make_url("/token")),
+            client_id="cid",
+            client_secret="",
+            initial_refresh_token="rt1",
+            state_dir=str(tmp_path),
+        )
+        await mgr.get_valid_token()
+
+        call = state["calls"][-1]
+        assert not call["content_type"].startswith("application/json")
+        assert "client_secret" not in call["body"]
+
+    async def test_form_body_keeps_client_secret(
+        self, recording_token_server, tmp_path,
+    ):
+        server, state = recording_token_server
+        mgr = OAuth2TokenManager(
+            service_name="withsecret",
+            token_url=str(server.make_url("/token")),
+            client_id="cid",
+            client_secret="csec",
+            initial_refresh_token="rt1",
+            state_dir=str(tmp_path),
+        )
+        await mgr.get_valid_token()
+        assert state["calls"][-1]["body"]["client_secret"] == "csec"
+
+    def test_invalid_format_rejected(self, tmp_path):
+        with pytest.raises(ValueError):
+            OAuth2TokenManager(
+                service_name="bad",
+                token_url="https://x/token",
+                client_id="cid",
+                state_dir=str(tmp_path),
+                token_request_format="xml",
+            )
+
+    def test_make_routes_tolerates_missing_client_secret(self):
+        routes = make_routes({"services": {"svc": {
+            "upstream": "https://api.example.com",
+            "auth": "oauth2",
+            "oauth2": {
+                "token_url": "https://x/token",
+                "client_id": "cid",
+                "token_request_format": "json",
+                "refresh_token": "rt",
+            },
+        }}}, state_dir="/tmp/fgap-test-tokens")
+        assert routes
