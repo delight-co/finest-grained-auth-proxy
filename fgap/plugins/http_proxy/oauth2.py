@@ -98,10 +98,10 @@ class OAuth2TokenManager:
                 f"token_request_format must be 'form' or 'json', "
                 f"got '{token_request_format}'"
             )
-        self.service_name = service_name
-        self.token_url = token_url
-        self.client_id = client_id
-        self.client_secret = client_secret
+        self._service_name = service_name
+        self._token_url = token_url
+        self._client_id = client_id
+        self._client_secret = client_secret
         self._token_request_format = token_request_format
         self._state_dir = state_dir
 
@@ -157,17 +157,17 @@ class OAuth2TokenManager:
 
     async def _refresh_direct(self) -> None:
         """Refresh by POSTing to the token endpoint directly."""
-        logger.info("Refreshing OAuth2 token for %s (direct)", self.service_name)
+        logger.info("Refreshing OAuth2 token for %s (direct)", self._service_name)
 
         data = {
             "grant_type": "refresh_token",
-            "client_id": self.client_id,
+            "client_id": self._client_id,
             "refresh_token": self._refresh_token,
         }
         # Public OAuth2 clients (PKCE) have no client secret; omit the
         # key entirely so strict token endpoints don't reject the request.
-        if self.client_secret:
-            data["client_secret"] = self.client_secret
+        if self._client_secret:
+            data["client_secret"] = self._client_secret
 
         # Some token endpoints (e.g. Anthropic's) only accept a JSON body,
         # the classic ones take form-encoded (RFC 6749 §6).
@@ -178,14 +178,14 @@ class OAuth2TokenManager:
 
         async with aiohttp.ClientSession() as session:
             async with session.post(
-                self.token_url,
+                self._token_url,
                 **body_kwargs,
                 timeout=aiohttp.ClientTimeout(total=15),
             ) as resp:
                 if resp.status != 200:
                     text = await resp.text()
                     raise RuntimeError(
-                        f"OAuth2 refresh failed for {self.service_name}: "
+                        f"OAuth2 refresh failed for {self._service_name}: "
                         f"HTTP {resp.status}: {text}"
                     )
 
@@ -201,7 +201,7 @@ class OAuth2TokenManager:
         self._save_state()
         logger.info(
             "OAuth2 token refreshed for %s (expires in %ds)",
-            self.service_name,
+            self._service_name,
             result.get("expires_in", 0),
         )
 
@@ -209,7 +209,7 @@ class OAuth2TokenManager:
         """Refresh by delegating to an external API."""
         logger.info(
             "Refreshing OAuth2 token for %s (delegated via %s)",
-            self.service_name, self._refresh_url,
+            self._service_name, self._refresh_url,
         )
 
         payload = {
@@ -231,7 +231,7 @@ class OAuth2TokenManager:
                 if resp.status != 200:
                     text = await resp.text()
                     raise RuntimeError(
-                        f"Delegated OAuth2 refresh failed for {self.service_name}: "
+                        f"Delegated OAuth2 refresh failed for {self._service_name}: "
                         f"HTTP {resp.status}: {text}"
                     )
 
@@ -244,7 +244,7 @@ class OAuth2TokenManager:
         self._save_state()
         logger.info(
             "OAuth2 token refreshed for %s via delegated API (expires in %ds)",
-            self.service_name,
+            self._service_name,
             result.get("expires_in", 0),
         )
 
@@ -254,7 +254,7 @@ class OAuth2TokenManager:
         return await self.get_valid_token()
 
     def _state_file(self) -> str:
-        return os.path.join(self._state_dir, f"{self.service_name}.json")
+        return os.path.join(self._state_dir, f"{self._service_name}.json")
 
     def _load_state(self) -> dict | None:
         path = self._state_file()
@@ -264,17 +264,17 @@ class OAuth2TokenManager:
             with open(path) as f:
                 return json.load(f)
         except (json.JSONDecodeError, OSError) as e:
-            logger.warning("Failed to load token state for %s: %s", self.service_name, e)
+            logger.warning("Failed to load token state for %s: %s", self._service_name, e)
             return None
 
     def _save_state(self) -> None:
         try:
             save_token_state(
                 self._state_dir,
-                self.service_name,
+                self._service_name,
                 access_token=self._access_token,
                 refresh_token=self._refresh_token,
                 expires_at=self._expires_at,
             )
         except OSError as e:
-            logger.warning("Failed to save token state for %s: %s", self.service_name, e)
+            logger.warning("Failed to save token state for %s: %s", self._service_name, e)
