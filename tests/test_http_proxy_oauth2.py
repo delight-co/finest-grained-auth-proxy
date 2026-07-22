@@ -39,6 +39,7 @@ async def mock_token_server():
         state["last_grant_type"] = data.get("grant_type")
         state["last_refresh_token"] = data.get("refresh_token")
         state["last_client_id"] = data.get("client_id")
+        state["last_user_agent"] = request.headers.get("User-Agent", "")
         return web.json_response({
             "access_token": state["next_access_token"],
             "refresh_token": state["next_refresh_token"],
@@ -466,3 +467,23 @@ class TestRefreshFailureErrorBody:
         message = body["error"]["message"]
         assert "llmapi" in message
         assert "fgap-oauth-login" in message
+
+
+class TestRefreshUserAgent:
+    async def test_refresh_sends_explicit_user_agent(
+        self, mock_token_server, tmp_path,
+    ):
+        """CDN fingerprint checks (Cloudflare 1010 observed against
+        Anthropic's token endpoint 2026-07-22) can reject library-default
+        UAs; the refresh path advertises an explicit greppable UA."""
+        server, state = mock_token_server
+        mgr = OAuth2TokenManager(
+            service_name="ua",
+            token_url=str(server.make_url("/token")),
+            client_id="cid",
+            client_secret="csec",
+            initial_refresh_token="rt",
+            state_dir=str(tmp_path),
+        )
+        await mgr.get_valid_token()
+        assert "claude-cli" in state["last_user_agent"]

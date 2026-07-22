@@ -33,6 +33,15 @@ _EXPIRY_BUFFER_SECONDS = 30
 # Default token state directory
 _DEFAULT_STATE_DIR = "/var/lib/fgap/tokens"
 
+# User-Agent for token-endpoint requests. Some OAuth token endpoints
+# sit behind CDNs that fingerprint the client (Cloudflare returned
+# error 1010 to a bare Python-urllib default UA against Anthropic's
+# platform.claude.com during a 2026-07-22 exchange). aiohttp's default
+# UA has not been observed failing but the same fingerprint check
+# could tighten at any time; set it explicitly so we surface a known
+# and greppable client identity in server logs.
+_REFRESH_USER_AGENT = "claude-cli/2.1.215 (external, cli)"
+
 
 def save_token_state(
     state_dir: str,
@@ -176,7 +185,8 @@ class OAuth2TokenManager:
             else {"data": data}
         )
 
-        async with aiohttp.ClientSession() as session:
+        headers = {"User-Agent": _REFRESH_USER_AGENT}
+        async with aiohttp.ClientSession(headers=headers) as session:
             async with session.post(
                 self._token_url,
                 **body_kwargs,
