@@ -85,7 +85,9 @@ def _has_help_flag(args: list[str]) -> bool:
 
 async def _help_with_extra(binary: str, args: list[str], extra: str) -> dict:
     """Run a CLI help command and append extra text to the output."""
-    result = await execute_cli(binary, args, {}, timeout=10)
+    result = await execute_cli(
+        binary, args, {}, timeout=10, allowed_binaries=frozenset({binary}),
+    )
     # gh outputs help to stdout
     output = result.get("stdout", "")
     return {"exit_code": 0, "stdout": output + extra, "stderr": ""}

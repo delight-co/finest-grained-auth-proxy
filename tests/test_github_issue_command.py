@@ -102,7 +102,7 @@ class TestHelp:
         assert "--old" in result["stdout"]
         assert "--new" in result["stdout"]
         assert "--replace-all" in result["stdout"]
-        mock_cli.assert_called_once_with("gh", ["issue", "edit", "--help"], {}, timeout=10)
+        mock_cli.assert_called_once_with("gh", ["issue", "edit", "--help"], {}, timeout=10, allowed_binaries=frozenset({'gh'}))
 
     async def test_issue_comment_edit_help(self):
         result = await execute(
