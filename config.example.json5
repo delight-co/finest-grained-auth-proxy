@@ -157,38 +157,54 @@
             { "token": "sk_YOUR_KEY", "resources": ["*"] }
           ]
         }
-        // Streaming LLM API with OAuth2 refresh — e.g. the Anthropic
-        // API in front of a Claude Code container: the container runs
-        // with ANTHROPIC_BASE_URL={proxy}/proxy/anthropic and
-        // ANTHROPIC_AUTH_TOKEN=dummy, so the real credential never
-        // enters the sandbox. Seed the token state file (state_dir/
-        // anthropic.json: {"access_token", "refresh_token",
-        // "expires_at"}) and the proxy refreshes from there.
+        // Static bearer token, inline:
+        // "myapi": {
+        //   "upstream": "https://api.example.com",
+        //   "auth": "bearer",
+        //   "credentials": [
+        //     { "token": "YOUR_ACCESS_TOKEN", "resources": ["*"] }
+        //   ]
+        // },
+
+        // Streaming LLM API with a static bearer token read from a file
+        // — e.g. the Anthropic API in front of a Claude Code container:
+        // the container runs with ANTHROPIC_BASE_URL={proxy}/proxy/anthropic
+        // and ANTHROPIC_AUTH_TOKEN=dummy, so the real credential never
+        // enters the sandbox. A Claude subscription mints the long-lived
+        // token with `claude setup-token`; save it (single line, chmod 600)
+        // to the token_file below. The file is re-read on every request,
+        // so replacing its contents rotates the credential without a
+        // restart.
         // "anthropic": {
         //   "upstream": "https://api.anthropic.com",
-        //   "auth": "oauth2",
+        //   "auth": "bearer",
         //   "streaming": true,
         //   // forward the client's own protocol headers…
         //   "forward_request_headers": ["anthropic-version", "anthropic-beta"],
         //   // …and pin required flags without clobbering them
         //   // (comma-merged into the client's value):
         //   "append_headers": { "anthropic-beta": "oauth-2025-04-20" },
+        //   "credentials": [
+        //     { "token_file": "~/.config/fgap/tokens/anthropic-bearer.txt",
+        //       "resources": ["*"] }
+        //   ]
+        // },
+
+        // OAuth2 with automatic token refresh — seed interactively on the
+        // proxy host:  fgap-oauth-login --config <this file> --service <name>
+        // (see README for the field-verified Anthropic oauth2 config, the
+        // alternative when `claude setup-token` is not an option):
+        // "freee": {
+        //   "upstream": "https://api.freee.co.jp",
+        //   "auth": "oauth2",
         //   "oauth2": {
-        //     "token_url": "https://console.anthropic.com/v1/oauth/token",
-        //     "client_id": "YOUR_OAUTH_CLIENT_ID",  // no client_secret: public (PKCE) client
-        //     "token_request_format": "json",
-        //     // Interactive seeding on the proxy host:
-        //     //   fgap-oauth-login --config <this file> --service anthropic
-        //     // (verify authorize params against your client's login URL)
-        //     "login": {
-        //       "authorize_url": "https://claude.ai/oauth/authorize",
-        //       "redirect_uri": "https://console.anthropic.com/oauth/code/callback",
-        //       "scope": "org:create_api_key user:profile user:inference",
-        //       "extra_authorize_params": { "code": "true" }
-        //     }
+        //     "token_url": "https://accounts.secure.freee.co.jp/public_api/token",
+        //     "client_id": "YOUR_CLIENT_ID",
+        //     "client_secret": "YOUR_CLIENT_SECRET",
+        //     "refresh_token": "YOUR_REFRESH_TOKEN"
         //   }
         // }
-        // See DESIGN.md / plugin.py docstring for bearer / basic / oauth2 examples
+        // See plugin.py docstring for all auth modes (bearer / basic / header / oauth2)
       }
     },
 
@@ -228,37 +244,6 @@
           "resources": ["*"]
         }
       ]
-    },
-
-    // HTTP proxy: forward requests to upstream APIs with credential injection.
-    // No CLI binary needed — sandbox uses curl directly.
-    // Usage: curl $FGAP_PROXY_URL/proxy/{service}/{path}
-    "http_proxy": {
-      "services": {
-        // Example: static bearer token
-        // "myapi": {
-        //   "upstream": "https://api.example.com",
-        //   "auth": "bearer",
-        //   "credentials": [
-        //     {"token": "YOUR_ACCESS_TOKEN", "resources": ["*"]}
-        //   ]
-        // },
-
-        // Example: OAuth2 with automatic token refresh
-        // "freee": {
-        //   "upstream": "https://api.freee.co.jp",
-        //   "auth": "oauth2",
-        //   "oauth2": {
-        //     "token_url": "https://accounts.secure.freee.co.jp/public_api/token",
-        //     "client_id": "YOUR_CLIENT_ID",
-        //     "client_secret": "YOUR_CLIENT_SECRET",
-        //     "refresh_token": "YOUR_REFRESH_TOKEN"
-        //   },
-        //   "credentials": [
-        //     {"token": "INITIAL_ACCESS_TOKEN", "resources": ["*"]}
-        //   ]
-        // }
-      }
     },
 
     // S3: proxy to S3-compatible storage (AWS S3, Cloudflare R2, MinIO)
