@@ -4,11 +4,13 @@ Generalizes the git smart HTTP proxy pattern: receives HTTP requests,
 injects Authorization header, forwards to upstream.
 
 Supports two auth modes:
-- "bearer": static token from credentials array
+- "bearer": static token from credentials array, inline ("token") or
+  read per request from a file ("token_file")
 - "oauth2": automatic token refresh via OAuth2TokenManager
 """
 
 import logging
+import os
 import urllib.parse
 
 import aiohttp
@@ -67,13 +69,51 @@ def _oauth_refresh_error(service: str, err: Exception) -> web.Response:
     )
 
 
-def _select_token(resource: str, service_config: dict) -> str | None:
-    """Select token for a service resource. First-match-wins."""
+def _select_credential(resource: str, service_config: dict) -> dict | None:
+    """Select the credential entry for a service resource. First-match-wins."""
     for cred in service_config.get("credentials", []):
         for pattern in cred.get("resources", []):
             if match_resource(pattern, resource):
-                return cred.get("token")
+                return cred
     return None
+
+
+def _read_token_file(path: str) -> str:
+    """Read a token from a file, trimming surrounding whitespace.
+
+    Called on every request (never cached), so overwriting the file
+    rotates the credential without a proxy restart.
+    """
+    with open(os.path.expanduser(path), encoding="utf-8") as f:
+        return f.read().strip()
+
+
+def _token_file_ok(path: str) -> bool:
+    """True when the file is readable and holds a non-empty token."""
+    try:
+        return bool(_read_token_file(path))
+    except OSError:
+        return False
+
+
+def _token_file_error(service: str, path: str, detail: object) -> web.Response:
+    """Actionable error for a token_file the proxy cannot use.
+
+    Same contract as _oauth_refresh_error: the message is the runbook,
+    and agent-side clients surface it verbatim.
+    """
+    message = (
+        f"fgap: could not read token for service '{service}' from "
+        f"token_file '{path}' ({detail}). Write the token as a single "
+        f"line to that file on the proxy host; it is re-read on every "
+        f"request, so no restart is needed."
+    )
+    logger.error(message)
+    return web.json_response(
+        {"type": "error",
+         "error": {"type": "api_error", "message": message}},
+        status=502,
+    )
 
 
 def make_routes(
@@ -116,6 +156,19 @@ def make_routes(
                 f"http_proxy service '{name}': 'append_headers' must be a "
                 f"mapping of header name to value"
             )
+        for cred in svc.get("credentials", []):
+            if "token" in cred and "token_file" in cred:
+                raise ValueError(
+                    f"http_proxy service '{name}': a credential has both "
+                    f"'token' and 'token_file' — use exactly one"
+                )
+            if "token_file" in cred and not isinstance(
+                cred["token_file"], str,
+            ):
+                raise ValueError(
+                    f"http_proxy service '{name}': 'token_file' must be a "
+                    f"string path"
+                )
 
     # Initialize OAuth2 token managers for services with auth=oauth2
     token_managers = {}
@@ -193,7 +246,18 @@ def make_routes(
             effective_auth = "bearer"  # OAuth2 always uses Bearer
         else:
             resource = request.query.get("_resource", "default")
-            token = _select_token(resource, service_config)
+            cred = _select_credential(resource, service_config)
+            if cred is not None and "token_file" in cred:
+                try:
+                    token = _read_token_file(cred["token_file"])
+                except OSError as e:
+                    return _token_file_error(service, cred["token_file"], e)
+                if not token:
+                    return _token_file_error(
+                        service, cred["token_file"], "file is empty",
+                    )
+            else:
+                token = cred.get("token") if cred else None
             effective_auth = auth_type
 
         if not token:

@@ -39,6 +39,13 @@ Auth modes:
 
 - ``bearer``: ``Authorization: Bearer <token>``
 - ``basic``: ``Authorization: Basic <base64>``
+- For all static modes the credential entry holds the token inline
+  (``token``) or names a file to read it from (``token_file``, contents
+  trimmed; ``~`` expands). Token files are re-read on **every request**,
+  so overwriting the file rotates the credential without a restart; a
+  missing/empty file answers with an actionable 502 that tells the
+  operator what to fix. Exactly one of ``token`` / ``token_file`` per
+  credential.
 - ``header``: inject the token under a caller-chosen header name
   (``header_name`` required) — for APIs like ``x-api-key`` that put the
   credential outside ``Authorization``. This is what makes the plugin
@@ -78,8 +85,11 @@ Config example::
                 // container runs with ANTHROPIC_BASE_URL pointed at
                 // {proxy}/proxy/anthropic and a dummy client token,
                 // so the real credential never enters the sandbox.
+                // A Claude subscription mints the long-lived token
+                // with `claude setup-token` (see README); the oauth2
+                // auth mode remains as the alternative.
                 "upstream": "https://api.anthropic.com",
-                "auth": "oauth2",
+                "auth": "bearer",
                 "streaming": true,
                 "forward_request_headers": [
                     "anthropic-version", "anthropic-beta"
@@ -87,13 +97,11 @@ Config example::
                 "append_headers": {
                     "anthropic-beta": "oauth-2025-04-20"
                 },
-                "oauth2": {
-                    "token_url":
-                        "https://console.anthropic.com/v1/oauth/token",
-                    "client_id": "YOUR_OAUTH_CLIENT_ID",
-                    "token_request_format": "json",
-                    "refresh_token": "seeded_refresh_token"
-                }
+                "credentials": [
+                    {"token_file":
+                         "~/.config/fgap/tokens/anthropic-bearer.txt",
+                     "resources": ["*"]}
+                ]
             }
         }
     }
@@ -111,7 +119,7 @@ import logging
 
 from fgap.plugins.base import Plugin
 
-from .proxy import make_routes
+from .proxy import _token_file_ok, make_routes
 
 logger = logging.getLogger(__name__)
 
@@ -136,15 +144,31 @@ class HttpProxyPlugin(Plugin):
         return make_routes(config, state_dir=config.get("state_dir", ""))
 
     async def health_check(self, config: dict) -> list[dict]:
-        """Report configured services (no active health check)."""
+        """Report configured services (no active upstream check).
+
+        Credentials sourced from a token_file additionally report
+        whether the file currently yields a non-empty token — a cheap
+        liveness probe for static-token services.
+        """
         results = []
         for service_name, service_config in config.get("services", {}).items():
-            results.append({
+            entry = {
                 "service": service_name,
                 "upstream": service_config.get("upstream", ""),
                 "auth": service_config.get("auth", "bearer"),
                 "has_credentials": len(
                     service_config.get("credentials", [])
                 ) > 0,
-            })
+            }
+            token_files = [
+                cred["token_file"]
+                for cred in service_config.get("credentials", [])
+                if "token_file" in cred
+            ]
+            if token_files:
+                entry["token_files"] = [
+                    {"path": path, "readable": _token_file_ok(path)}
+                    for path in token_files
+                ]
+            results.append(entry)
         return results
