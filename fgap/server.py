@@ -23,6 +23,10 @@ def setup_logging(secrets: set[str], *, logfile: str | None = None) -> None:
     handler.setFormatter(MaskingFormatter(LOG_FORMAT, secrets))
     logging.root.addHandler(handler)
     logging.root.setLevel(logging.INFO)
+    # httpx/httpcore log every outbound request at INFO — pure duplication
+    # of the aiohttp access log line for the same proxied request.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
 def _daemonize() -> None:
@@ -69,5 +73,10 @@ def main() -> int:
 
     app = create_app(config)
     logger.info("Starting fgap on %s:%d", args.host, port)
-    web.run_app(app, host=args.host, port=port, print=None)
+    run_kwargs = {}
+    # "access_log": false silences the per-request aiohttp.access lines.
+    # Default is on — for an auth proxy they double as the audit trail.
+    if config.get("access_log", True) is False:
+        run_kwargs["access_log"] = None
+    web.run_app(app, host=args.host, port=port, print=None, **run_kwargs)
     return 0

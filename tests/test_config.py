@@ -90,3 +90,14 @@ class TestLoadConfig:
         f.write_text('{"port": 1234,}')
         os.chmod(f, 0o600)
         assert load_config(str(f))["port"] == 1234
+
+
+class TestNoisyLoggerQuieting:
+    def test_httpx_and_httpcore_are_warning_level(self):
+        import logging
+
+        from fgap.server import setup_logging
+
+        setup_logging(set())
+        assert logging.getLogger("httpx").level == logging.WARNING
+        assert logging.getLogger("httpcore").level == logging.WARNING

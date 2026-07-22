@@ -2,6 +2,10 @@
   // Port for the proxy server (default: 8766)
   "port": 8766,
 
+  // Per-request aiohttp.access log lines (default: true). They double
+  // as the proxy's audit trail; set false for quieter logs.
+  // "access_log": false,
+
   // Timeout settings (seconds)
   "timeouts": {
     "cli": 60,   // CLI subprocess timeout
