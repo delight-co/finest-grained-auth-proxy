@@ -10,6 +10,7 @@ from fgap.client.gh import (
     parse_git_remote_url,
     run,
     strip_repo_flag,
+    transform_api_field_files,
     transform_api_input,
     transform_body_file,
 )
@@ -540,6 +541,87 @@ class TestRepoView:
         req = state["requests"][0]
         assert req["resource"] == "cli/cli"
         assert req["args"] == ["repo", "view", "https://github.com/cli/cli"]
+
+
+# =========================================================================
+# transform_api_field_files
+# =========================================================================
+
+
+class TestTransformApiFieldFiles:
+    def test_expands_dash_f_at_file(self, tmp_path):
+        f = tmp_path / "body.md"
+        f.write_text("hello world")
+        result = transform_api_field_files(
+            ["api", "/repos/o/r/pulls/1", "-f", f"body=@{f}"],
+        )
+        assert result == ["api", "/repos/o/r/pulls/1", "-f", "body=hello world"]
+
+    def test_expands_dash_F_at_file(self, tmp_path):
+        f = tmp_path / "payload.json"
+        f.write_text('{"key": "value"}')
+        result = transform_api_field_files(
+            ["api", "/x", "-F", f"data=@{f}"],
+        )
+        assert result == ["api", "/x", "-F", 'data={"key": "value"}']
+
+    def test_expands_field_glued_form(self, tmp_path):
+        f = tmp_path / "b.md"
+        f.write_text("contents")
+        result = transform_api_field_files(
+            ["api", "/x", f"--field=body=@{f}"],
+        )
+        assert result == ["api", "/x", "--field=body=contents"]
+
+    def test_expands_raw_field(self, tmp_path):
+        f = tmp_path / "b.md"
+        f.write_text("x")
+        result = transform_api_field_files(
+            ["api", "/x", "--raw-field", f"body=@{f}"],
+        )
+        assert result == ["api", "/x", "--raw-field", "body=x"]
+
+    def test_plain_value_untouched(self):
+        result = transform_api_field_files(
+            ["api", "/x", "-f", "body=hello"],
+        )
+        assert result == ["api", "/x", "-f", "body=hello"]
+
+    def test_at_stdin_untouched(self):
+        result = transform_api_field_files(
+            ["api", "/x", "-f", "body=@-"],
+        )
+        assert result == ["api", "/x", "-f", "body=@-"]
+
+    def test_non_api_untouched(self, tmp_path):
+        f = tmp_path / "b.md"
+        f.write_text("contents")
+        result = transform_api_field_files(
+            ["issue", "create", "-f", f"body=@{f}"],
+        )
+        # -f on non-api subcommands is not this flag; leave the arg alone.
+        assert result == ["issue", "create", "-f", f"body=@{f}"]
+
+    def test_missing_file_raises(self):
+        with pytest.raises(ValueError, match="File not found"):
+            transform_api_field_files(
+                ["api", "/x", "-f", "body=@/nonexistent/path.md"],
+            )
+
+    def test_bare_at_without_key_untouched(self):
+        # Malformed: no '=', so no key/value pair — leave it as-is.
+        result = transform_api_field_files(
+            ["api", "/x", "-f", "@file.md"],
+        )
+        assert result == ["api", "/x", "-f", "@file.md"]
+
+    def test_preserves_other_flags(self, tmp_path):
+        f = tmp_path / "b.md"
+        f.write_text("x")
+        result = transform_api_field_files(
+            ["api", "/x", "-X", "PATCH", "-H", "H: v", "-f", f"body=@{f}"],
+        )
+        assert result == ["api", "/x", "-X", "PATCH", "-H", "H: v", "-f", "body=x"]
 
 
 # =========================================================================

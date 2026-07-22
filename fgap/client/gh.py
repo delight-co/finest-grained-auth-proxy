@@ -473,6 +473,57 @@ def _read_file(path: str) -> str:
         return f.read()
 
 
+# Flags on ``gh api`` that accept ``key=value`` where the value may be
+# ``@path`` for a client-side file reference. Both the short and long
+# forms — including the JSON-typed ``--raw-field`` — need the same
+# expansion. ``@-`` (stdin) is left as-is: gh reads from stdin itself,
+# and the caller's shell has already routed the pipe.
+_API_FIELD_FLAGS = frozenset({"-f", "--field", "-F", "--raw-field"})
+
+
+def _expand_at_file_value(kv: str) -> str:
+    """Expand ``key=@path`` to ``key=<file contents>``. Pass through
+    values that are not file references (plain strings, ``@-`` stdin,
+    or malformed pairs without ``=``)."""
+    if "=" not in kv:
+        return kv
+    key, _, value = kv.partition("=")
+    if not value.startswith("@") or value == "@-":
+        return kv
+    return f"{key}={_read_file(value[1:])}"
+
+
+def transform_api_field_files(args: list[str]) -> list[str]:
+    """For ``gh api``, expand ``@file`` on ``-f`` / ``-F`` values.
+
+    Stock gh reads the file from the caller's filesystem before making
+    the request; under the proxy the caller and the server-side gh
+    live in different filesystems, so the read has to happen
+    client-side. Applies to ``-f key=@path``, ``-F key=@path``, and the
+    ``--field=`` / ``--raw-field=`` glued forms.
+    """
+    if not args or args[0] != "api":
+        return args
+    result = []
+    skip_next = False
+    for i, arg in enumerate(args):
+        if skip_next:
+            skip_next = False
+            continue
+        next_arg = args[i + 1] if i + 1 < len(args) else None
+
+        if arg in _API_FIELD_FLAGS and next_arg is not None:
+            result.append(arg)
+            result.append(_expand_at_file_value(next_arg))
+            skip_next = True
+        elif "=" in arg and arg.split("=", 1)[0] in _API_FIELD_FLAGS:
+            prefix, _, value = arg.partition("=")
+            result.append(f"{prefix}={_expand_at_file_value(value)}")
+        else:
+            result.append(arg)
+    return result
+
+
 # =============================================================================
 # Help Text
 # =============================================================================
@@ -639,6 +690,7 @@ async def run(
     try:
         clean_args = transform_body_file(clean_args)
         clean_args, stdin_data = transform_api_input(clean_args)
+        clean_args = transform_api_field_files(clean_args)
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1
