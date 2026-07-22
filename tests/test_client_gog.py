@@ -214,7 +214,7 @@ class TestAuth:
         server, state = mock_proxy
         state["auth_status"] = web.json_response({"plugins": {"google": [
             {
-                "masked_keyring_password": "test***",
+                "keyring_hint": "test***",
                 "valid": True,
                 "accounts": "user@example.com",
                 "resources": ["*"],
@@ -230,7 +230,7 @@ class TestAuth:
         server, state = mock_proxy
         state["auth_status"] = web.json_response({"plugins": {"google": [
             {
-                "masked_keyring_password": "test***",
+                "keyring_hint": "test***",
                 "valid": False,
                 "error": "invalid keyring",
                 "resources": ["*"],
