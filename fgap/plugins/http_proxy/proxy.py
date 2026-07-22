@@ -45,6 +45,28 @@ _STREAMING_SKIP_RESPONSE_HEADERS = frozenset({"Content-Length"})
 _SUPPORTED_AUTH = frozenset({"bearer", "basic", "header", "oauth2"})
 
 
+def _oauth_refresh_error(service: str, err: Exception) -> web.Response:
+    """Actionable error for a token refresh the proxy can no longer do.
+
+    The message is the runbook: agent-side clients surface API error
+    text verbatim, so it tells the operator exactly what to run on the
+    proxy host. The body follows the common ``{"type": "error", ...}``
+    shape so anthropic-style clients render it.
+    """
+    message = (
+        f"fgap: OAuth2 token refresh failed for service '{service}' "
+        f"({err}). The proxy-side token state is stale or revoked — "
+        f"re-seed it or run 'fgap-oauth-login --service {service}' "
+        f"on the proxy host."
+    )
+    logger.error(message)
+    return web.json_response(
+        {"type": "error",
+         "error": {"type": "api_error", "message": message}},
+        status=502,
+    )
+
+
 def _select_token(resource: str, service_config: dict) -> str | None:
     """Select token for a service resource. First-match-wins."""
     for cred in service_config.get("credentials", []):
@@ -164,7 +186,10 @@ def make_routes(
 
         # Get token based on auth type
         if auth_type == "oauth2" and service in token_managers:
-            token = await token_managers[service].get_valid_token()
+            try:
+                token = await token_managers[service].get_valid_token()
+            except (RuntimeError, aiohttp.ClientError, OSError) as e:
+                return _oauth_refresh_error(service, e)
             effective_auth = "bearer"  # OAuth2 always uses Bearer
         else:
             resource = request.query.get("_resource", "default")
@@ -190,7 +215,10 @@ def make_routes(
         # the buffered path).
         if resp.status == 401 and service in token_managers:
             logger.info("Got 401 from %s, refreshing token", service)
-            token = await token_managers[service].handle_401()
+            try:
+                token = await token_managers[service].handle_401()
+            except (RuntimeError, aiohttp.ClientError, OSError) as e:
+                return _oauth_refresh_error(service, e)
             resp = await _proxy_request(
                 request, upstream, path, token, "bearer", extra_headers,
                 forward_request_headers=forward_extra,

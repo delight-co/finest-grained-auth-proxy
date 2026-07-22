@@ -18,6 +18,7 @@ dev = [
 ]
 
 [project.scripts]
+fgap-oauth-login = "fgap.plugins.http_proxy.login:main"
 fgap-gh = "fgap.client.gh:main"
 fgap-gog = "fgap.client.gog:main"
 fgap-notion = "fgap.client.notion:main"
