@@ -616,6 +616,102 @@ class TestPrCreateHead:
 
 
 # =========================================================================
+# run(): pr <subcmd> branch inference
+# =========================================================================
+
+
+class TestPrBranchInference:
+    async def test_pr_merge_no_selector_injects_branch(self, mock_proxy):
+        """pr merge without a positional selector: inject current branch."""
+        server, state = mock_proxy
+        await run(
+            ["pr", "merge", "--squash", "-R", "o/r"],
+            _url(server),
+            _get_remote_url=_no_git(),
+            _get_branch=await _fake_branch("my-feat"),
+        )
+        args = state["requests"][0]["args"]
+        # Selector appears right after the subcommand name.
+        assert args[:3] == ["pr", "merge", "my-feat"]
+
+    async def test_pr_view_with_number_leaves_args_alone(self, mock_proxy):
+        server, state = mock_proxy
+        await run(
+            ["pr", "view", "42", "-R", "o/r"],
+            _url(server),
+            _get_remote_url=_no_git(),
+            _get_branch=await _fake_branch("my-feat"),
+        )
+        args = state["requests"][0]["args"]
+        assert args[:3] == ["pr", "view", "42"]
+        assert "my-feat" not in args
+
+    async def test_pr_view_with_url_leaves_args_alone(self, mock_proxy):
+        server, state = mock_proxy
+        await run(
+            ["pr", "view", "https://github.com/o/r/pull/9", "-R", "o/r"],
+            _url(server),
+            _get_remote_url=_no_git(),
+            _get_branch=await _fake_branch("my-feat"),
+        )
+        args = state["requests"][0]["args"]
+        assert args[2] == "https://github.com/o/r/pull/9"
+
+    async def test_pr_edit_flag_value_not_treated_as_selector(
+        self, mock_proxy,
+    ):
+        """--add-label bug is a flag+value pair, not a positional selector."""
+        server, state = mock_proxy
+        await run(
+            ["pr", "edit", "--add-label", "bug", "-R", "o/r"],
+            _url(server),
+            _get_remote_url=_no_git(),
+            _get_branch=await _fake_branch("my-feat"),
+        )
+        args = state["requests"][0]["args"]
+        assert args[:3] == ["pr", "edit", "my-feat"]
+        # value token survived intact
+        label_idx = args.index("--add-label")
+        assert args[label_idx + 1] == "bug"
+
+    async def test_pr_status_not_affected(self, mock_proxy):
+        """pr status has no selector and stays out of scope."""
+        server, state = mock_proxy
+        await run(
+            ["pr", "status", "-R", "o/r"],
+            _url(server),
+            _get_remote_url=_no_git(),
+            _get_branch=await _fake_branch("my-feat"),
+        )
+        args = state["requests"][0]["args"]
+        assert "my-feat" not in args
+
+    async def test_no_branch_fails_with_clear_error(self, mock_proxy, capsys):
+        server, state = mock_proxy
+        code = await run(
+            ["pr", "merge", "--squash", "-R", "o/r"],
+            _url(server),
+            _get_remote_url=_no_git(),
+            _get_branch=_no_git(),
+        )
+        assert code == 1
+        err = capsys.readouterr().err
+        assert "could not determine the PR selector" in err
+        assert state["requests"] == []
+
+    async def test_help_not_blocked(self, mock_proxy):
+        server, state = mock_proxy
+        code = await run(
+            ["pr", "merge", "--help"],
+            _url(server),
+            _get_remote_url=_no_git(),
+            _get_branch=_no_git(),
+        )
+        assert code == 0
+        assert len(state["requests"]) == 1
+
+
+# =========================================================================
 # run(): proxy call and output
 # =========================================================================
 
