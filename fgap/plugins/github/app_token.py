@@ -44,6 +44,53 @@ def _load_private_key(cred: dict) -> bytes:
         "App credential needs 'private_key' or 'private_key_path'")
 
 
+def _app_jwt(cred: dict) -> str:
+    """Short-lived JWT authenticating as the App itself."""
+    now = int(time.time())
+    return jwt.encode(
+        {"iat": now - JWT_BACKDATE_S, "exp": now + JWT_TTL_S,
+         "iss": str(cred["app_id"])},
+        _load_private_key(cred), algorithm="RS256")
+
+
+async def check_app(cred: dict, api_base: str = DEFAULT_API_BASE) -> dict:
+    """Health probe for an App credential.
+
+    GET /user cannot validate an App — there is no user token, and even
+    a minted installation token is not a user token. Instead, sign the
+    App JWT and call GET /app: this exercises the private key and the
+    app_id, and returns the App's identity (name/slug) and granted
+    permissions. Writes made through the credential appear as
+    ``<slug>[bot]``.
+    """
+    app_jwt = _app_jwt(cred)
+    timeout = aiohttp.ClientTimeout(total=10)
+    session = get_session()
+    own_session = session is None
+    if own_session:
+        session = aiohttp.ClientSession()
+    try:
+        async with session.get(
+            f"{api_base}/app",
+            headers={"Authorization": f"Bearer {app_jwt}",
+                     "Accept": "application/vnd.github+json"},
+            timeout=timeout,
+        ) as resp:
+            data = await resp.json()
+            if resp.status == 200:
+                return {
+                    "valid": True,
+                    "app": data.get("name", ""),
+                    "slug": data.get("slug", ""),
+                    "permissions": data.get("permissions", {}),
+                }
+            return {"valid": False,
+                    "error": f"HTTP {resp.status}: {data.get('message', data)}"}
+    finally:
+        if own_session:
+            await session.close()
+
+
 def _narrowed_repositories(cred: dict, resource: str) -> list[str] | None:
     """Repository narrowing for the minted token.
 
@@ -99,11 +146,7 @@ class AppTokenStore:
     async def _mint(self, cred: dict, repositories: list[str] | None,
                     permissions: dict | None,
                     api_base: str) -> tuple[str, float]:
-        now = int(time.time())
-        app_jwt = jwt.encode(
-            {"iat": now - JWT_BACKDATE_S, "exp": now + JWT_TTL_S,
-             "iss": str(cred["app_id"])},
-            _load_private_key(cred), algorithm="RS256")
+        app_jwt = _app_jwt(cred)
         body: dict = {}
         if repositories:
             body["repositories"] = repositories

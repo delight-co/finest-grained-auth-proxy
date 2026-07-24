@@ -1063,18 +1063,35 @@ async def _handle_auth(args: list[str], client: ProxyClient) -> int:
 
     for i, cred in enumerate(creds):
         valid = cred.get("valid", False)
-        token = cred.get("masked_token", "***")
         mark = "\u2713" if valid else "\u2717"
-        print(f"  {mark} [{i}] {token}")
-        if valid:
-            if cred.get("user"):
-                print(f"      User: {cred['user']}")
-            if cred.get("scopes"):
-                print(f"      Scopes: {cred['scopes']}")
-            if cred.get("rate_limit_remaining"):
-                print(f"      Rate limit remaining: {cred['rate_limit_remaining']}")
+        if "app_id" in cred:
+            slug = cred.get("slug", "")
+            name = f"GitHub App {slug}" if slug else "GitHub App"
+            print(f"  {mark} [{i}] {name} (app_id {cred.get('app_id')}, "
+                  f"installation {cred.get('installation_id')})")
+            if valid:
+                if slug:
+                    print(f"      Acts as: {slug}[bot]")
+                perms = cred.get("permissions") or {}
+                if perms:
+                    rendered = ", ".join(
+                        f"{k}: {v}" for k, v in sorted(perms.items()))
+                    print(f"      Permissions: {rendered}")
+            else:
+                print(f"      Error: {cred.get('error', 'Unknown error')}")
         else:
-            print(f"      Error: {cred.get('error', 'Unknown error')}")
+            token = cred.get("masked_token", "***")
+            print(f"  {mark} [{i}] {token}")
+            if valid:
+                if cred.get("user"):
+                    print(f"      User: {cred['user']}")
+                if cred.get("scopes"):
+                    print(f"      Scopes: {cred['scopes']}")
+                if cred.get("rate_limit_remaining"):
+                    print(f"      Rate limit remaining: "
+                          f"{cred['rate_limit_remaining']}")
+            else:
+                print(f"      Error: {cred.get('error', 'Unknown error')}")
         resources = cred.get("resources", [])
         if resources:
             print(f"      Resources: {', '.join(resources)}")
