@@ -140,6 +140,8 @@ Why you might want this over a fine-grained PAT:
 
 Setup: create a GitHub App (only the permissions you need, webhook off), install it on the repositories you want to expose, note the App ID and the installation ID (the number at the end of the installation's URL), generate a private key, and point `private_key_path` at it. Config shape: [config.example.json5](../config.example.json5).
 
+`GET /auth/status` (and `fgap-gh auth status`) probes an App credential by signing the App JWT and calling `GET /app` — validating the key and the App ID without minting a token — and reports the App's name/slug and granted permissions. Writes made through the credential appear on GitHub as `<slug>[bot]`.
+
 ## Managed local processes
 
 `managed_processes` entries are helpers the proxy spawns on startup, restarts on crash (exponential backoff), and terminates on shutdown — typically stdio MCP servers wrapped by a stdio-to-HTTP bridge, with their API keys in env on the proxy host. Pair each with an `http_proxy` service whose upstream is the local port, so the sandbox reaches the helper through the proxy and never sees the credential. Status: `GET /processes`. Config shape: [config.example.json5](../config.example.json5).

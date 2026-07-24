@@ -1,15 +1,27 @@
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestServer
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 
 from fgap.plugins.github.plugin import GitHubPlugin
+
+
+@pytest.fixture(scope="module")
+def private_pem():
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    return key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    ).decode()
 
 
 @pytest.fixture
 async def mock_github_api():
     """Mock GitHub API server."""
     app = web.Application()
-    state = {"responses": []}
+    state = {"responses": [], "app_responses": [], "app_auth": []}
 
     async def handle_user(request):
         auth = request.headers.get("Authorization", "")
@@ -24,7 +36,19 @@ async def mock_github_api():
             },
         )
 
+    async def handle_app(request):
+        state["app_auth"].append(request.headers.get("Authorization", ""))
+        if state["app_responses"]:
+            return state["app_responses"].pop(0)
+        # Default: the App the JWT authenticates as
+        return web.json_response({
+            "name": "My App",
+            "slug": "my-app",
+            "permissions": {"contents": "write", "checks": "read"},
+        })
+
     app.router.add_get("/user", handle_user)
+    app.router.add_get("/app", handle_app)
     async with TestServer(app) as server:
         yield server, state
 
@@ -122,3 +146,76 @@ class TestGitHubHealthCheck:
             config, _api_url="http://127.0.0.1:1",
         )
         assert results[0]["masked_token"] == "***"
+
+
+class TestGitHubAppHealthCheck:
+    def _app_cred(self, private_pem, **extra) -> dict:
+        return {"app_id": 123456, "installation_id": 654321,
+                "private_key": private_pem, "resources": ["myorg/*"],
+                **extra}
+
+    async def test_app_credential_valid(self, mock_github_api, private_pem):
+        server, state = mock_github_api
+        plugin = GitHubPlugin()
+        config = {"credentials": [self._app_cred(private_pem)]}
+        results = await plugin.health_check(config, _api_url=_api_url(server))
+
+        assert len(results) == 1
+        r = results[0]
+        assert r["valid"] is True
+        assert r["app"] == "My App"
+        assert r["slug"] == "my-app"
+        assert r["permissions"] == {"contents": "write", "checks": "read"}
+        assert r["app_id"] == 123456
+        assert r["installation_id"] == 654321
+        assert r["resources"] == ["myorg/*"]
+        # identified as an App, not rendered as a broken empty token
+        assert "masked_token" not in r
+        # the probe authenticated with the App JWT
+        assert state["app_auth"] and state["app_auth"][0].startswith("Bearer ey")
+
+    async def test_app_credential_api_error(self, mock_github_api,
+                                            private_pem):
+        server, state = mock_github_api
+        state["app_responses"].append(
+            web.json_response({"message": "Integration not found"},
+                              status=404),
+        )
+        plugin = GitHubPlugin()
+        config = {"credentials": [self._app_cred(private_pem)]}
+        results = await plugin.health_check(config, _api_url=_api_url(server))
+
+        r = results[0]
+        assert r["valid"] is False
+        assert "404" in r["error"]
+        assert r["app_id"] == 123456
+
+    async def test_app_credential_unreadable_key(self):
+        plugin = GitHubPlugin()
+        config = {"credentials": [
+            {"app_id": 123456, "installation_id": 654321,
+             "private_key_path": "/nonexistent/key.pem",
+             "resources": ["myorg/*"]},
+        ]}
+        results = await plugin.health_check(
+            config, _api_url="http://127.0.0.1:1",
+        )
+        r = results[0]
+        assert r["valid"] is False
+        assert "error" in r
+
+    async def test_mixed_token_and_app(self, mock_github_api, private_pem):
+        server, state = mock_github_api
+        plugin = GitHubPlugin()
+        config = {"credentials": [
+            self._app_cred(private_pem),
+            {"token": "ghp_token1_xxxxxxx", "resources": ["*"]},
+        ]}
+        results = await plugin.health_check(config, _api_url=_api_url(server))
+
+        assert len(results) == 2
+        assert results[0]["valid"] is True
+        assert results[0]["slug"] == "my-app"
+        assert results[1]["valid"] is True
+        assert results[1]["user"] == "testuser"
+        assert results[1]["masked_token"] == "ghp_toke***"

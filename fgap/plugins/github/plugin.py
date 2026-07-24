@@ -68,23 +68,38 @@ class GitHubPlugin(Plugin):
     async def health_check(
         self, config: dict, *, _api_url: str = _GITHUB_API_URL,
     ) -> list[dict]:
-        """Check PAT validity via GitHub REST API.
+        """Check credential validity via the GitHub REST API.
 
-        For each credential, calls GET /user to verify the token
-        and reports scopes and rate limit.
+        Token credentials are probed with GET /user (login, scopes,
+        rate limit). App credentials have no token to probe — GET /user
+        cannot validate them — so they are probed with GET /app using
+        the App JWT (App name/slug and granted permissions).
         """
+        from .app_token import check_app
+
         results = []
         for cred in config.get("credentials", []):
-            token = cred.get("token", "")
-            entry = {
-                "masked_token": mask_value(token),
-                "resources": cred.get("resources", []),
-            }
-            try:
-                status = await _check_token(token, _api_url)
-                entry.update(status)
-            except Exception as e:
-                entry.update({"valid": False, "error": str(e)})
+            if "app_id" in cred:
+                entry = {
+                    "app_id": cred.get("app_id"),
+                    "installation_id": cred.get("installation_id"),
+                    "resources": cred.get("resources", []),
+                }
+                try:
+                    entry.update(await check_app(cred, api_base=_api_url))
+                except Exception as e:
+                    entry.update({"valid": False, "error": str(e)})
+            else:
+                token = cred.get("token", "")
+                entry = {
+                    "masked_token": mask_value(token),
+                    "resources": cred.get("resources", []),
+                }
+                try:
+                    status = await _check_token(token, _api_url)
+                    entry.update(status)
+                except Exception as e:
+                    entry.update({"valid": False, "error": str(e)})
             results.append(entry)
         return results
 
