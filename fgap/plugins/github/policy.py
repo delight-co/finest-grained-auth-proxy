@@ -1,7 +1,7 @@
 """Server-side policy for the gh CLI.
 
 The capability model must hold even when a caller bypasses the fgap-gh
-client and POSTs ``/cli`` directly. Two classes of subcommand are denied
+client and POSTs ``/cli`` directly. Three classes of subcommand are denied
 here at the choke point (the router turns a non-None return into HTTP 403):
 
 - ``gh auth`` exfiltrates the injected credential to stdout / git credential
@@ -14,6 +14,12 @@ here at the choke point (the router turns a non-None return into HTTP 403):
   server-writable paths via the server's privileges. These must go through
   the git proxy endpoint instead, which streams the pack to the client
   (no FS write on the server).
+- Blocking watch commands (``gh run watch``, ``gh pr checks --watch``)
+  cannot finish within the proxy's single-shot execution budget
+  (``timeouts.cli``); letting them start only to be killed mid-flight
+  produced timeouts that looked exactly like the watched run failing.
+  Denying them up front turns a slow ambiguous death into an immediate
+  error that names the polling alternative.
 
 This mirrors the structure of :mod:`fgap.plugins.aws.policy`, giving the
 GitHub plugin the same extension point an allowlist would later occupy.
@@ -34,12 +40,36 @@ _LEAKING_SUBCOMMANDS = frozenset({"auth"})
 # which streams the pack and never writes to the server's FS.
 _REPO_FS_SUBCOMMANDS = frozenset({"clone", "create", "fork", "sync"})
 
+# Watch-style commands block until an external event (a CI run finishing),
+# which by design outlives any sane per-command budget. Under the proxy's
+# single-shot execution model they can only ever die by timeout, and that
+# death is easy to misread as the watched run failing. Deny them up front
+# with the polling alternative instead.
+_POLLING_HINT = (
+    "poll instead: `gh run view <run-id> --json status,conclusion` "
+    "in a sleep loop until status is \"completed\""
+)
+
+
+def _is_blocking_watch(args: list[str]) -> bool:
+    if len(args) >= 2 and args[0] == "run" and args[1] == "watch":
+        return True
+    if (
+        len(args) >= 2
+        and args[0] == "pr"
+        and args[1] == "checks"
+        and "--watch" in args
+    ):
+        return True
+    return False
+
 
 def check_policy(args: list[str], resource: str, config: dict) -> str | None:
     """Return None to allow, or a human-readable deny reason.
 
-    Denies ``gh auth`` subcommands (credential leak) and ``gh repo``
-    filesystem-touching subcommands (server-side FS write).
+    Denies ``gh auth`` subcommands (credential leak), ``gh repo``
+    filesystem-touching subcommands (server-side FS write), and blocking
+    watch commands (cannot finish within the proxy's execution budget).
 
     ``gh repo clone`` / ``create`` / ``fork`` / ``sync`` run the underlying
     git operation on the fgap server, so the destination path the client
@@ -64,5 +94,12 @@ def check_policy(args: list[str], resource: str, config: dict) -> str | None:
             f"call could land outside your environment). Clone via the git "
             f"proxy instead: "
             f"git clone http://<fgap-host>:<port>/git/<owner>/<repo>.git"
+        )
+    if _is_blocking_watch(args):
+        return (
+            f"gh {args[0]} {args[1]} blocks until the watched run finishes "
+            f"and cannot complete within the proxy's single-shot execution "
+            f"budget (timeouts.cli) — it would only die by timeout, which "
+            f"is indistinguishable from the run failing; {_POLLING_HINT}"
         )
     return None

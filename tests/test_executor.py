@@ -2,7 +2,7 @@ import os
 
 import pytest
 
-from fgap.core.executor import execute_cli
+from fgap.core.executor import EXIT_TIMEOUT, execute_cli
 
 # Test-friendly union of every binary spawned in this file. The allowlist
 # is required by execute_cli — the tests all share one broad set so each
@@ -44,8 +44,12 @@ class TestExecuteCli:
 
     async def test_timeout_kills_process(self):
         result = await execute_cli("sleep", ["10"], {}, timeout=1, allowed_binaries=_ANY)
-        assert result["exit_code"] == -1
-        assert "timed out" in result["stderr"]
+        # 124 (GNU timeout convention) + a proxy-attributing message, so a
+        # proxy kill is distinguishable from the command itself failing.
+        assert result["exit_code"] == EXIT_TIMEOUT
+        assert "fgap proxy" in result["stderr"]
+        assert "killed after 1s" in result["stderr"]
+        assert "did not fail" in result["stderr"]
 
     async def test_binary_not_found(self):
         result = await execute_cli("nonexistent_binary_xyz", [], {}, allowed_binaries=_ANY)

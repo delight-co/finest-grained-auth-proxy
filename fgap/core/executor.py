@@ -1,6 +1,11 @@
 import asyncio
 import os
 
+# GNU timeout's convention for "killed because it ran too long". Callers can
+# tell a proxy-killed command apart from the command itself failing (its own
+# exit code and stderr) or the binary being absent (-1).
+EXIT_TIMEOUT = 124
+
 
 async def execute_cli(
     binary: str,
@@ -22,6 +27,11 @@ async def execute_cli(
 
     Returns:
         {"exit_code": int, "stdout": str, "stderr": str}
+
+        A command that outlives ``timeout`` is killed and reported with
+        ``exit_code`` :data:`EXIT_TIMEOUT` (124) and a stderr note
+        attributing the kill to the proxy — the command itself did not
+        fail; it was still running.
 
     Raises:
         ValueError: if ``binary`` is not in ``allowed_binaries``. The set
@@ -70,9 +80,15 @@ async def execute_cli(
         proc.kill()
         await proc.wait()
         return {
-            "exit_code": -1,
+            "exit_code": EXIT_TIMEOUT,
             "stdout": "",
-            "stderr": f"Command timed out after {timeout}s",
+            "stderr": (
+                f"fgap proxy: command killed after {timeout}s by the proxy "
+                f"CLI timeout (timeouts.cli) — the command itself did not "
+                f"fail; it was still running. Blocking commands that wait "
+                f"on external events do not fit the proxy's single-shot "
+                f"execution model; prefer a polling equivalent."
+            ),
         }
 
     return {
