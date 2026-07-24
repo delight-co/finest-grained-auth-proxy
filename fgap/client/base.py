@@ -21,9 +21,15 @@ class ProxyClient:
         result = await client.call_cli("gh", ["issue", "list"], "owner/repo")
     """
 
-    def __init__(self, proxy_url: str, *, timeout: int = 60):
+    # Longer than the server-side CLI budget (timeouts.cli, default 60s) so
+    # the proxy's own timeout verdict (exit 124 with an attributing message)
+    # reaches the client, instead of the HTTP request dying first and
+    # surfacing as a bare connection error.
+    DEFAULT_TIMEOUT = 90
+
+    def __init__(self, proxy_url: str, *, timeout: int | None = None):
         self.proxy_url = proxy_url.rstrip("/")
-        self.timeout = timeout
+        self.timeout = timeout if timeout is not None else self.DEFAULT_TIMEOUT
         self._session: aiohttp.ClientSession | None = None
         self._owns_session = False
 

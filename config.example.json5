@@ -16,7 +16,8 @@
 
   // Timeout settings (seconds)
   "timeouts": {
-    "cli": 60,   // CLI subprocess timeout
+    "cli": 60,   // CLI subprocess timeout; commands that outlive it are
+                 // killed with exit 124 + a stderr note naming the proxy
     "http": 30   // Outbound HTTP request timeout
   },
 

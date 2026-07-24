@@ -84,6 +84,33 @@ class TestCheckPolicyUnit:
     def test_repo_list_allowed(self):
         assert check_policy(["repo", "list"], "owner/repo", {}) is None
 
+    # Blocking watch commands wait on an external event and can only ever
+    # die by proxy timeout — which looks exactly like the watched run
+    # failing. Denied up front, with the polling alternative in the reason.
+
+    def test_run_watch_denied(self):
+        r = check_policy(["run", "watch", "12345"], "owner/repo", {})
+        assert r is not None
+        assert "poll instead" in r
+
+    def test_pr_checks_watch_denied(self):
+        r = check_policy(
+            ["pr", "checks", "42", "--watch"], "owner/repo", {},
+        )
+        assert r is not None
+        assert "poll instead" in r
+
+    def test_pr_checks_without_watch_allowed(self):
+        # one-shot pr checks is fine; only the blocking flavor is denied
+        assert check_policy(["pr", "checks", "42"], "owner/repo", {}) is None
+
+    def test_run_view_allowed(self):
+        # the recommended polling primitive must itself stay allowed
+        assert check_policy(
+            ["run", "view", "12345", "--json", "status,conclusion"],
+            "owner/repo", {},
+        ) is None
+
 
 @pytest.fixture
 async def gh_client():
@@ -137,3 +164,15 @@ class TestRouterEnforcement:
             "resource": "owner/repo",
         })
         assert resp.status == 403
+
+    async def test_run_watch_returns_403(self, gh_client):
+        # Blocking watch must be refused up front with the polling hint,
+        # not started and killed by the CLI timeout later.
+        resp = await gh_client.post("/cli", json={
+            "tool": "gh",
+            "args": ["run", "watch", "12345"],
+            "resource": "owner/repo",
+        })
+        assert resp.status == 403
+        body = await resp.text()
+        assert "poll instead" in body
